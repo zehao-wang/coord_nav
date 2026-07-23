@@ -1,0 +1,16 @@
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+*.egg
+build/
+dist/
+
+# ROS catkin build artifacts (obstacle_perception is built on the car)
+devel/
+install/
+
+# runtime logs / data dumps
+gui/car_console.log
+gui/car_console.log.*
+*.jsonl

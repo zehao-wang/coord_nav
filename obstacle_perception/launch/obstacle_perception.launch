@@ -1,0 +1,39 @@
+<launch>
+  <!-- Fast C++ lidar clustering -> obstacle circles ("collision spheres").
+       Publishes /obstacles (Float32MultiArray [x,y,r,...], metres, base frame)
+       and /obstacles_viz (MarkerArray for rviz).
+
+       Measured on the Nano: ~3.4 ms/frame, so the ceiling is the lidar's own
+       ~7.7 Hz. rate_hz is the FIXED publish rate off the latest scan; set it to
+       0 to publish every scan (max, ~7.7 Hz). Default 3.0 = the required rate. -->
+
+  <arg name="rate_hz"     default="3.0"/>
+  <arg name="scan_topic"  default="/scan"/>
+  <arg name="frame_id"    default="base_footprint"/>
+
+  <!-- clustering params (match perception_server.py defaults) -->
+  <arg name="eps"         default="0.20"/>
+  <arg name="min_samples" default="5"/>
+  <arg name="margin"      default="0.10"/>
+  <arg name="max_radius"  default="0.30"/>
+
+  <!-- laser->base 2D transform; MUST match the base_footprint->laser static
+       transform in viz.launch (there: xyz 0 0 0.15, yaw pi). -->
+  <arg name="lidar_yaw"   default="3.14159265"/>
+  <arg name="lidar_x"     default="0.0"/>
+  <arg name="lidar_y"     default="0.0"/>
+
+  <node name="obstacle_circles" pkg="obstacle_perception"
+        type="obstacle_circles_node" output="screen">
+    <param name="rate_hz"     value="$(arg rate_hz)"/>
+    <param name="scan_topic"  value="$(arg scan_topic)"/>
+    <param name="frame_id"    value="$(arg frame_id)"/>
+    <param name="eps"         value="$(arg eps)"/>
+    <param name="min_samples" value="$(arg min_samples)"/>
+    <param name="margin"      value="$(arg margin)"/>
+    <param name="max_radius"  value="$(arg max_radius)"/>
+    <param name="lidar_yaw"   value="$(arg lidar_yaw)"/>
+    <param name="lidar_x"     value="$(arg lidar_x)"/>
+    <param name="lidar_y"     value="$(arg lidar_y)"/>
+  </node>
+</launch>

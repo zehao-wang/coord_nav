@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carclient"
+version = "0.1.0"
+description = "Minimal ROS1 client for the Jetson mecanum car (obstacles + drive actions)"
+requires-python = ">=3.7"
+# rospy is provided by the ROS / ros1 conda env, not PyPI, so it is not listed
+# as a dependency here.
+
+[tool.setuptools]
+packages = ["carclient"]

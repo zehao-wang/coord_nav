@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>obstacle_perception</name>
+  <version>0.1.0</version>
+  <description>
+    Fast C++ lidar clustering into obstacle circles ("collision spheres").
+    Subscribes /scan, clusters (DBSCAN -> enclosing circles -> redundancy drop,
+    ported 1:1 from perception_server.py), publishes the circles as a ROS topic
+    at a fixed configurable rate. Remote consumers only ever read the circles.
+  </description>
+  <maintainer email="wzhmytq@gmail.com">jetson</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+</package>
