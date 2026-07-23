@@ -25,18 +25,23 @@ import rospy
 from std_msgs.msg import Float32MultiArray, String, Float32
 from sensor_msgs.msg import BatteryState
 
+# Standard mecanum inverse kinematics (x fwd, y left). Correct once the car is
+# in the standard DIAGONAL-paired roller config (FL & RR same handedness, FR &
+# RL same) -- i.e. AFTER swapping the two rear wheels. Pure translation:
+# left wheels = vx - vy, right = vx + vy; rotation adds +-(lx+ly)*wz.
+#   [FL, RL, FR, RR], forward-positive, magnitude scales it.
 ACTIONS = {
     0:  [0.0,  0.0,  0.0,  0.0],   # STOP
-    1:  [1.0,  1.0,  1.0,  1.0],   # forward
-    2:  [0.0,  1.0,  1.0,  0.0],   # forward-left
-    3:  [-1.0, 1.0,  1.0, -1.0],   # strafe-left
-    4:  [-1.0, 0.0,  0.0, -1.0],   # back-left
-    5:  [-1.0, -1.0, -1.0, -1.0],  # back
-    6:  [0.0, -1.0, -1.0,  0.0],   # back-right
-    7:  [1.0, -1.0, -1.0,  1.0],   # strafe-right
-    8:  [1.0,  0.0,  0.0,  1.0],   # forward-right
-    9:  [-1.0, -1.0, 1.0,  1.0],   # rotate-left (ccw)
-    10: [1.0,  1.0, -1.0, -1.0],   # rotate-right (cw)
+    1:  [1.0,  1.0,  1.0,  1.0],   # forward        (n,0)
+    2:  [0.0,  1.0,  1.0,  0.0],   # forward-left   (n,n)
+    3:  [-1.0, 1.0,  1.0, -1.0],   # strafe-left    (0,n)
+    4:  [-1.0, 0.0,  0.0, -1.0],   # back-left      (-n,n)
+    5:  [-1.0, -1.0, -1.0, -1.0],  # back           (-n,0)
+    6:  [0.0, -1.0, -1.0,  0.0],   # back-right     (-n,-n)
+    7:  [1.0, -1.0, -1.0,  1.0],   # strafe-right   (0,-n)
+    8:  [1.0,  0.0,  0.0,  1.0],   # forward-right  (n,-n)
+    9:  [-1.0, -1.0, 1.0,  1.0],   # rotate-ccw
+    10: [1.0,  1.0, -1.0, -1.0],   # rotate-cw
 }
 
 ZERO = [0.0, 0.0, 0.0, 0.0]
@@ -86,7 +91,7 @@ class DriveActionNode(object):
         mag = d[1] if len(d) > 1 and d[1] > 0 else self.def_mag
         dur = d[2] if len(d) > 2 and d[2] > 0 else self.def_dur
         mag = max(0.0, min(self.max_mag, mag))
-        dur = max(0.0, min(self.max_dur, dur))
+        dur = max(0.0, min(self.max_dur, dur))   # duration is always as sent (no compensation)
         now = rospy.Time.now()
 
         with self._lock:

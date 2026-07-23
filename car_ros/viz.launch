@@ -73,10 +73,11 @@
     <param name="rate_hz"            value="20.0"/>
     <param name="default_magnitude"  value="40.0"/>
     <param name="default_duration_s" value="0.8"/>
-    <!-- max_magnitude capped to 50: full PWM on 4 wheels exceeds the 12V 2A
-         supply's current -> brownout that glitches the MCU serial + USB WiFi ->
-         runaway. 50 keeps peak current within budget. -->
-    <param name="max_magnitude"      value="50.0"/>
+    <!-- max_magnitude 80: cap on the FINAL applied magnitude (after the diagonal
+         x2 boost). base 40 -> diagonal 80 reaches (n,n) exactly. (The old 50 cap
+         was from a mis-diagnosed brownout; the real instability was the removed
+         rplidar-watchdog.) -->
+    <param name="max_magnitude"      value="80.0"/>
     <param name="max_duration_s"     value="3.0"/>   <!-- hard cap: a stray cmd can't run >3s -->
   </node>
 </launch>

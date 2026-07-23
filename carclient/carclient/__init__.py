@@ -50,6 +50,12 @@ class Action(object):
     ROT_CW = 10
 
 
+# Diagonal actions drive only 2 wheels (half the per-axis speed), so their
+# magnitude is scaled by CarClient.diag_mult to reach the (n,n) grid cell.
+DIAGONALS = frozenset([Action.FWD_LEFT, Action.BACK_LEFT,
+                       Action.BACK_RIGHT, Action.FWD_RIGHT])
+
+
 def _parse(data):
     fid = int(data[0])
     circ = [(data[i], data[i + 1], data[i + 2]) for i in range(1, len(data) - 2, 3)]
@@ -62,7 +68,8 @@ class CarClient(object):
     MIN_LINK_VOLT = 6.0
 
     def __init__(self, magnitude=40.0, duration=0.8, stale_after=1.0,
-                 car_ip=None, ssh_key=None, init_node=True, dump_path=None):
+                 car_ip=None, ssh_key=None, init_node=True, dump_path=None,
+                 diag_mult=2.0):
         """magnitude/duration are the (deliberately conservative) defaults for
         drive(); stale_after (s) is when obstacles are considered disconnected.
         car_ip/ssh_key are only for estop() and fall back to $CAR_IP /
@@ -71,6 +78,7 @@ class CarClient(object):
         bounded to the last 100 frames."""
         self.default_mag = magnitude
         self.default_dur = duration
+        self.diag_mult = diag_mult          # magnitude boost for diagonal actions
         self.stale_after = stale_after
         self.car_ip = car_ip or os.environ.get("CAR_IP", "10.42.0.187")
         self.ssh_key = os.path.expanduser(
@@ -179,6 +187,8 @@ class CarClient(object):
         /drive_result."""
         mag = self.default_mag if magnitude is None else magnitude
         dur = self.default_dur if duration is None else duration
+        if action in DIAGONALS:
+            mag = mag * self.diag_mult      # diagonals need a boost to reach (n,n)
         self._pub.publish(Float32MultiArray(data=[float(action), float(mag), float(dur)]))
 
     def stop(self):

@@ -27,6 +27,13 @@ workstation, with a PySide6 console and a `carclient` Python API.
 - **Rear motor ports M2/M4 are swapped in hardware** (rear-left ↔ rear-right)
   and the rear plugs are polarity-reversed. Fixed in car_base's `/wheel_cmd`
   handler: `rl→M4, rr→M2`, both negated. Verified wheel-by-wheel.
+- **The mecanum wheels were mounted wrong** (side-paired: both left wheels one
+  roller handedness, both right the other), not the standard DIAGONAL-paired X
+  (FL & RR same, FR & RL same). Forward worked but strafe just rotated. Fixed by
+  physically **swapping the two rear wheels** → standard config, standard
+  kinematics table. Diagonal moves (2-wheel drive) reach only half a straight
+  move's per-axis distance, so a client-side `diag_mult` (default 2x, tunable in
+  the GUI) scales the diagonal magnitude to land on the (n,n) grid cell.
 - **Cross-distro message md5**: `sensor_msgs/BatteryState` differs between the
   car's Melodic and the workstation's Noetic, so the client CANNOT subscribe to
   `/battery` (connection dropped). Worked around by republishing voltage as
@@ -56,8 +63,10 @@ workstation, with a PySide6 console and a `carclient` Python API.
   text contains `<x>` — use `pkill -x <name>` or kill by PID.
 
 ### Safety layers (host-side; a **physical motor E-STOP is still recommended**)
-- **Magnitude hard-capped at 50** (car-side): full PWM on 4 wheels browns out the
-  12V 2A supply.
+- **Magnitude hard-capped at 80** (car-side, final applied magnitude). The
+  earlier 50 cap came from a mis-diagnosed "brownout" — the real instability was
+  the removed rplidar-watchdog. The GUI's base-magnitude ceiling is 80/diag_mult
+  so `base x diag_mult` can never exceed 80.
 - **Sustained brake**: drive_action holds `[0,0,0,0]` for ~1.5 s after every move
   (~30 messages), so a few dropped stops can't latch.
 - Conservative defaults (magnitude 40, duration 0.8 s); hard duration cap 3 s.
