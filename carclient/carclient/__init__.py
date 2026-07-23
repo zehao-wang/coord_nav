@@ -54,6 +54,8 @@ class Action(object):
 # magnitude is scaled by CarClient.diag_mult to reach the (n,n) grid cell.
 DIAGONALS = frozenset([Action.FWD_LEFT, Action.BACK_LEFT,
                        Action.BACK_RIGHT, Action.FWD_RIGHT])
+# Strafe is slower than forward (roller drag), scaled by CarClient.strafe_mult.
+STRAFE = frozenset([Action.LEFT, Action.RIGHT])
 
 
 def _parse(data):
@@ -67,9 +69,9 @@ class CarClient(object):
     # wedged (same link as motors/odom), so a low reading == link lost.
     MIN_LINK_VOLT = 6.0
 
-    def __init__(self, magnitude=40.0, duration=0.8, stale_after=1.0,
+    def __init__(self, magnitude=40.0, duration=0.5, stale_after=1.0,
                  car_ip=None, ssh_key=None, init_node=True, dump_path=None,
-                 diag_mult=2.0):
+                 diag_mult=1.6, strafe_mult=1.2):
         """magnitude/duration are the (deliberately conservative) defaults for
         drive(); stale_after (s) is when obstacles are considered disconnected.
         car_ip/ssh_key are only for estop() and fall back to $CAR_IP /
@@ -79,6 +81,7 @@ class CarClient(object):
         self.default_mag = magnitude
         self.default_dur = duration
         self.diag_mult = diag_mult          # magnitude boost for diagonal actions
+        self.strafe_mult = strafe_mult      # magnitude boost for strafe (left/right)
         self.stale_after = stale_after
         self.car_ip = car_ip or os.environ.get("CAR_IP", "10.42.0.187")
         self.ssh_key = os.path.expanduser(
@@ -189,6 +192,8 @@ class CarClient(object):
         dur = self.default_dur if duration is None else duration
         if action in DIAGONALS:
             mag = mag * self.diag_mult      # diagonals need a boost to reach (n,n)
+        elif action in STRAFE:
+            mag = mag * self.strafe_mult    # strafe drags -> keep grid steps even
         self._pub.publish(Float32MultiArray(data=[float(action), float(mag), float(dur)]))
 
     def stop(self):

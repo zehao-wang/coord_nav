@@ -191,13 +191,15 @@ class MainWindow(QMainWindow):
         master.setStyleSheet("color:#8a9098;")
         self.hz_spin = self._spin(0.5, 3.0, 0.5, 3.0)     # capped at 3 Hz (read rate)
         self.mag_spin = self._spin(0.0, 80.0, 5.0, 40.0)    # base magnitude (cap 80)
-        self.dur_spin = self._spin(0.1, 3.0, 0.1, 0.8)      # step move = exact run time, no compensation
-        self.diag_spin = self._spin(1.0, 4.0, 0.1, 2.0)     # diagonal magnitude multiplier
+        self.dur_spin = self._spin(0.1, 3.0, 0.1, 0.5)      # step move = exact run time, no compensation
+        self.diag_spin = self._spin(1.0, 4.0, 0.1, 1.6)     # diagonal magnitude multiplier
+        self.strafe_spin = self._spin(1.0, 4.0, 0.1, 1.2)   # strafe magnitude multiplier
         form.addRow("ROS master", master)
         form.addRow("refresh Hz", self.hz_spin)
         form.addRow("magnitude (x)", self.mag_spin)
         form.addRow("step move(s)", self.dur_spin)
         form.addRow("diag mult", self.diag_spin)
+        form.addRow("strafe mult", self.strafe_spin)
         apply_btn = QPushButton("apply")
         apply_btn.clicked.connect(self._apply_settings)
         form.addRow(apply_btn)
@@ -244,10 +246,11 @@ class MainWindow(QMainWindow):
         return box
 
     def _update_mag_cap(self):
-        # base magnitude x diag_mult must not exceed 80 (car's applied cap);
-        # keep the live multiplier in sync so the cap and behaviour always match
-        self.mag_spin.setMaximum(80.0 / max(self.diag_spin.value(), 0.1))
+        # base magnitude x (largest multiplier) must not exceed 80 (car's cap)
+        m = max(self.diag_spin.value(), self.strafe_spin.value())
+        self.mag_spin.setMaximum(80.0 / max(m, 0.1))
         self.client.diag_mult = self.diag_spin.value()
+        self.client.strafe_mult = self.strafe_spin.value()
 
     @staticmethod
     def _spin(lo, hi, step, val):
@@ -264,8 +267,9 @@ class MainWindow(QMainWindow):
         hz = self.hz_spin.value()
         self.poll_timer.start(int(1000.0 / hz))
         self._update_mag_cap()
-        self.log("SEND", "apply: refresh=%.1fHz mag=%.0f move=%.2fs diag=%.1fx"
-                 % (hz, self.mag_spin.value(), self.dur_spin.value(), self.diag_spin.value()))
+        self.log("SEND", "apply: refresh=%.1fHz mag=%.0f move=%.2fs diag=%.1fx strafe=%.1fx"
+                 % (hz, self.mag_spin.value(), self.dur_spin.value(),
+                    self.diag_spin.value(), self.strafe_spin.value()))
 
     # ---- handlers --------------------------------------------------------
     def _on_result(self, r):

@@ -32,8 +32,10 @@ workstation, with a PySide6 console and a `carclient` Python API.
   (FL & RR same, FR & RL same). Forward worked but strafe just rotated. Fixed by
   physically **swapping the two rear wheels** → standard config, standard
   kinematics table. Diagonal moves (2-wheel drive) reach only half a straight
-  move's per-axis distance, so a client-side `diag_mult` (default 2x, tunable in
-  the GUI) scales the diagonal magnitude to land on the (n,n) grid cell.
+  move's per-axis distance, and strafe drags, so client-side multipliers
+  (`diag_mult` ~1.6, `strafe_mult` ~1.2, both GUI-tunable, apply-based) scale
+  their magnitude to keep grid steps even. The GUI base-magnitude ceiling is
+  80/max(mult) so `base x mult` never exceeds the car's 80 cap.
 - **Cross-distro message md5**: `sensor_msgs/BatteryState` differs between the
   car's Melodic and the workstation's Noetic, so the client CANNOT subscribe to
   `/battery` (connection dropped). Worked around by republishing voltage as
