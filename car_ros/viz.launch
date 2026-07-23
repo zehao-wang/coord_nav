@@ -1,0 +1,82 @@
+<launch>
+  <!-- Live obstacle view + keyboard driving. No SLAM: nothing here builds or
+       keeps a map, the laptop only ever sees the current scan.
+       For mapping use mapping.launch instead. -->
+
+  <arg name="lidar_port" default="/dev/rplidar"/>
+  <arg name="base_port"  default="/dev/myserial"/>
+
+  <!-- Lidar mounting, metres and radians. x/y are the offset from the drive
+       centre, z the height of the scan plane: measured at the four-wheel
+       centre, 15 cm up. lidar_yaw is which way the sensor's own zero points
+       relative to the chassis front. Set it to 0 if the plot ends up mirrored
+       front to back. -->
+  <arg name="lidar_x" default="0.0"/>
+  <arg name="lidar_y" default="0.0"/>
+  <arg name="lidar_z" default="0.15"/>
+  <arg name="lidar_yaw" default="3.14159265"/>
+
+  <!-- The MCU already takes +x as forward, matching ROS, so no flip. -->
+  <arg name="invert_drive" default="false"/>
+
+  <node name="car_base" pkg="car_base" type="car_base_node.py" output="screen">
+    <param name="port" value="$(arg base_port)"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="invert_drive" value="$(arg invert_drive)"/>
+    <!-- 10 Hz (was 20): nobody consumes odom/imu faster than 3 Hz; halves the
+         Nano's continuous serial+publish load. Still well above the 1 s cmd
+         watchdog and fine for odom integration. -->
+    <param name="rate" value="10.0"/>
+  </node>
+
+  <!-- respawn: the rplidar-watchdog service kills this node to recover a wedged
+       lidar; roslaunch then brings it straight back on the same device. -->
+  <node name="rplidar" pkg="rplidar_ros" type="rplidarNode" output="screen"
+        respawn="true" respawn_delay="3">
+    <param name="serial_port" value="$(arg lidar_port)"/>
+    <param name="serial_baudrate" type="int" value="115200"/>
+    <param name="frame_id" value="laser"/>
+    <param name="angle_compensate" type="bool" value="true"/>
+  </node>
+
+  <node name="base_to_laser" pkg="tf" type="static_transform_publisher"
+        args="$(arg lidar_x) $(arg lidar_y) $(arg lidar_z) $(arg lidar_yaw) 0 0 base_footprint laser 50"/>
+
+  <!-- scan_bridge (TCP :9870 for non-ROS laptops) removed: the client is pure
+       ROS now and reads /obstacles + drives via /drive_action. Re-add it here
+       only if you bring back the old perception_server.py (:9871). -->
+
+  <!-- Fast C++ clustering: /scan -> obstacle circles ("collision spheres").
+       Publishes /obstacles (Float32MultiArray [x,y,r,...], metres, base frame)
+       at a fixed 3 Hz, plus /obstacles_viz for rviz. ~3.4 ms/frame, so 3 Hz is
+       far under the lidar's ~7.7 Hz ceiling; set rate_hz to 0 for max rate.
+       Reuses this launch's lidar_x/y/yaw so the laser->base transform always
+       matches the static_transform_publisher above. -->
+  <node name="obstacle_circles" pkg="obstacle_perception"
+        type="obstacle_circles_node" output="screen">
+    <param name="rate_hz"     value="3.0"/>
+    <param name="scan_topic"  value="/scan"/>
+    <param name="frame_id"    value="base_footprint"/>
+    <param name="eps"         value="0.20"/>
+    <param name="min_samples" value="5"/>
+    <param name="margin"      value="0.10"/>
+    <param name="max_radius"  value="0.30"/>
+    <param name="lidar_yaw"   value="$(arg lidar_yaw)"/>
+    <param name="lidar_x"     value="$(arg lidar_x)"/>
+    <param name="lidar_y"     value="$(arg lidar_y)"/>
+  </node>
+
+  <!-- Discrete mecanum drive-action server: /drive_action ([id,mag,dur]) ->
+       timed /wheel_cmd pulses (open loop). Republishes at 20 Hz so car_base's
+       watchdog never brakes mid-step; reports /drive_result on completion. -->
+  <node name="drive_action" pkg="car_base" type="drive_action_node.py" output="screen">
+    <param name="rate_hz"            value="20.0"/>
+    <param name="default_magnitude"  value="40.0"/>
+    <param name="default_duration_s" value="0.8"/>
+    <!-- max_magnitude capped to 50: full PWM on 4 wheels exceeds the 12V 2A
+         supply's current -> brownout that glitches the MCU serial + USB WiFi ->
+         runaway. 50 keeps peak current within budget. -->
+    <param name="max_magnitude"      value="50.0"/>
+    <param name="max_duration_s"     value="3.0"/>   <!-- hard cap: a stray cmd can't run >3s -->
+  </node>
+</launch>

@@ -14,3 +14,7 @@ install/
 gui/car_console.log
 gui/car_console.log.*
 *.jsonl
+
+# backups (kept on the car, not versioned)
+*.bak
+*.bak.*
