@@ -25,10 +25,9 @@ import rospy
 from std_msgs.msg import Float32MultiArray, String, Float32
 from sensor_msgs.msg import BatteryState
 
-# Standard mecanum inverse kinematics (x fwd, y left). Correct once the car is
-# in the standard DIAGONAL-paired roller config (FL & RR same handedness, FR &
-# RL same) -- i.e. AFTER swapping the two rear wheels. Pure translation:
-# left wheels = vx - vy, right = vx + vy; rotation adds +-(lx+ly)*wz.
+# Standard mecanum inverse kinematics (x fwd, y left), valid in the diagonal-
+# paired roller config (after swapping the two rear wheels). Pure translation:
+# left = vx - vy, right = vx + vy; rotation adds +-(lx+ly)*wz.
 #   [FL, RL, FR, RR], forward-positive, magnitude scales it.
 ACTIONS = {
     0:  [0.0,  0.0,  0.0,  0.0],   # STOP
@@ -68,6 +67,11 @@ class DriveActionNode(object):
         self.wheel_pub = rospy.Publisher("wheel_cmd", Float32MultiArray, queue_size=10)
         self.result_pub = rospy.Publisher("drive_result", String, queue_size=10)
         rospy.Subscriber("drive_action", Float32MultiArray, self.on_action, queue_size=10)
+        # Continuous-velocity path for the variant-1 (v,omega) MPC: the workstation
+        # sends one [FL,RL,FR,RR,duration] PULSE per plan cycle (~4 Hz); the CAR then
+        # locally 20 Hz keep-alives + brakes it, so lossy WiFi can't burst set_motor
+        # and wedge the serial. Reuses the timed-pulse/brake machinery below.
+        rospy.Subscriber("drive_wheels", Float32MultiArray, self.on_wheels, queue_size=10)
 
         self.batt_pub = rospy.Publisher("battery_v", Float32, queue_size=5)
         self._batt_min_period = 1.0 / 3.0     # throttle /battery_v to ~3 Hz
@@ -91,7 +95,7 @@ class DriveActionNode(object):
         mag = d[1] if len(d) > 1 and d[1] > 0 else self.def_mag
         dur = d[2] if len(d) > 2 and d[2] > 0 else self.def_dur
         mag = max(0.0, min(self.max_mag, mag))
-        dur = max(0.0, min(self.max_dur, dur))   # duration is always as sent (no compensation)
+        dur = max(0.0, min(self.max_dur, dur))
         now = rospy.Time.now()
 
         with self._lock:
@@ -110,6 +114,33 @@ class DriveActionNode(object):
                 self.brake_until = None           # a new move cancels braking
                 out = list(self.vec)
         self.wheel_pub.publish(Float32MultiArray(data=out))   # act immediately
+
+    def on_wheels(self, msg):
+        """Velocity pulse: [FL, RL, FR, RR, duration_s]. Drives that wheel vector
+        for duration with the same local keep-alive + sustained brake as a discrete
+        action (action id -1 in results)."""
+        d = list(msg.data)
+        if len(d) < 5:
+            rospy.logwarn("drive_wheels needs [FL,RL,FR,RR,dur], got %d", len(d))
+            return
+        wheels = [max(-self.max_mag, min(self.max_mag, float(w))) for w in d[:4]]
+        dur = max(0.0, min(self.max_dur, float(d[4])))
+        now = rospy.Time.now()
+        with self._lock:
+            if self.vec is not None:
+                self._finish_locked("superseded", now)
+            if dur <= 0.0 or not any(abs(w) > 0.5 for w in wheels):
+                self.action = 0
+                self._emit(0, "stopped", 0.0, 0.0, 0)
+                out = ZERO
+            else:
+                self.vec = wheels
+                self.action, self.mag, self.dur = -1, 0.0, dur   # -1 = velocity mode
+                self.t_start = now
+                self.end_time = now + rospy.Duration(dur)
+                self.brake_until = None
+                out = list(self.vec)
+        self.wheel_pub.publish(Float32MultiArray(data=out))      # act immediately
 
     # ---- 20 Hz keep-alive / sustained brake ------------------------------
     def on_tick(self, _evt):

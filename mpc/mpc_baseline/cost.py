@@ -1,0 +1,86 @@
+"""Trajectory cost for the discrete variant 2 (pure numpy).
+
+Given a batch of rollout states (K, H, 3) it returns one scalar cost per rollout,
+combining progress to goal B with a soft obstacle barrier plus a hard collision
+penalty. Both variants share this: variant 2 (discrete) uses total_cost_discrete,
+the continuous (v,w) variant 1 uses total_cost_velocity (same goal + all-obstacle
+barrier, plus cross-track and control smoothness) -- one cost, two action spaces.
+"""
+
+import numpy as np
+
+
+def goal_cost(states, goal, cost_cfg):
+    """Running + terminal squared distance to goal B (goal = (x, y))."""
+    pos = states[:, :, :2]                                   # (K, H, 2)
+    gx, gy = goal[0], goal[1]
+    d2 = (pos[:, :, 0] - gx) ** 2 + (pos[:, :, 1] - gy) ** 2  # (K, H)
+    running = cost_cfg.w_goal_run * d2.sum(axis=1)
+    terminal = cost_cfg.w_goal_term * d2[:, -1]
+    return running + terminal
+
+
+def obstacle_cost(states, field, robot_cfg, cost_cfg):
+    """Soft barrier inside the buffer plus a hard collision flag.
+
+    Returns (cost (K,), collided (K,) bool). A rollout is 'collided' if any of its
+    states falls inside the inflated obstacle (clearance < 0); those get the huge
+    cost_cfg.collision_cost so the argmin never selects a colliding rollout.
+    """
+    K, H, _ = states.shape
+    pts = states[:, :, :2].reshape(-1, 2)                    # (K*H, 2)
+    clr = field.clearance(pts, robot_cfg.robot_radius,
+                          cost_cfg.extra_margin).reshape(K, H)
+
+    inside = clr < 0.0
+    collided = inside.any(axis=1)
+
+    # soft barrier: penalise the buffer zone just outside inflation, quadratically
+    buf = cost_cfg.obs_buffer
+    encroach = np.clip(buf - clr, 0.0, buf)                  # 0 outside buffer
+    soft = cost_cfg.w_obs * (encroach ** 2).sum(axis=1)
+
+    cost = soft + collided * cost_cfg.collision_cost
+    return cost, collided
+
+
+def total_cost_discrete(states, goal, field, robot_cfg, cost_cfg):
+    """Full cost for the discrete variant. Returns (cost (K,), collided (K,)).
+
+    No standing-still penalty: STOP keeps goal cost high far from B (never the
+    argmin) and ~zero at B (correctly chosen), so a penalty would only fight settling.
+    """
+    g = goal_cost(states, goal, cost_cfg)
+    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg)
+    return g + o, collided
+
+
+def crosstrack_cost(states, line, cost_cfg):
+    """Squared perpendicular deviation from the straight A->B line, summed over the
+    horizon: pulls the car back onto the direct path after a detour (a tight
+    go-around). line = (nx, ny, c); cross-track = nx*x + ny*y - c. 0 if no line."""
+    if line is None or cost_cfg.w_track <= 0.0:
+        return 0.0
+    nx, ny, c = line
+    ct = nx * states[:, :, 0] + ny * states[:, :, 1] - c     # (K, H)
+    return cost_cfg.w_track * (ct * ct).sum(axis=1)
+
+
+def control_cost(controls, cost_cfg):
+    """Effort + smoothness for the continuous variant: penalise speed, yaw-rate,
+    and the STEP-TO-STEP change in each (so the sampled (v,w) plan is gradual, not
+    jerky). controls = (K, H, 2) of [v, w]."""
+    v, w = controls[:, :, 0], controls[:, :, 1]
+    eff = cost_cfg.w_ctrl_v * (v * v).sum(axis=1) + cost_cfg.w_ctrl_w * (w * w).sum(axis=1)
+    dv, dw = np.diff(v, axis=1), np.diff(w, axis=1)
+    smooth = cost_cfg.w_smooth * ((dv * dv).sum(axis=1) + (dw * dw).sum(axis=1))
+    return eff + smooth
+
+
+def total_cost_velocity(states, controls, goal, line, field, robot_cfg, cost_cfg):
+    """Full cost for the CONTINUOUS (v, w) sampling variant 1. Same goal + all-
+    obstacle barrier as the discrete variant, plus cross-track (return to the A->B
+    line) and control effort/smoothness. Returns (cost (K,), collided (K,))."""
+    g = goal_cost(states, goal, cost_cfg)
+    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg)
+    return g + o + crosstrack_cost(states, line, cost_cfg) + control_cost(controls, cost_cfg), collided

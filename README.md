@@ -15,15 +15,32 @@
 
 ---
 
-## 快速开始
+## 首次配置（一次性）
+
+1. **建 ROS 环境**（工作站用 conda 装 ROS Noetic，RoboStack）：
+   ```bash
+   conda create -n ros1 python=3.11 -y && conda activate ros1
+   conda install -c conda-forge -c robostack-staging ros-noetic-desktop -y
+   ```
+2. **改 `car_env.sh` 顶部 config 块**为本机：`CONDA_ROOT`（你的 conda 路径）、`SELF_IP`（本机在热点上的 IP）、`CAR_IP`（小车 IP）。
+3. **装 Python 包**（脚本 / 接模型 / GUI 都需要）：
+   ```bash
+   conda activate ros1 && pip install -e carclient carpolicy mpc
+   ```
+4. **`/etc/hosts` 加一行**（客户端靠主机名收数据，少了会"能 list 但收不到数据"）：`10.42.0.187 jetson-desktop`
+5. *（可选）* `roscar` 快捷方式：`~/.bashrc` 里加 `roscar(){ source /绝对路径/car_env.sh; }`，等价于直接 `source car_env.sh`。
+
+## 每次使用
 
 ```bash
-roscar                       # 激活 ros1 env + 指向小车 master（每个新终端跑一次）
-bash gui/run_gui.sh          # 打开 PySide6 上位机
-pip install -e carclient     # 装 Python API（写脚本/接模型用）
+sudo nmcli connection up jetson-ap   # 1) 工作站开热点；小车上电连 coord_nav
+ping 10.42.0.187                     #    小车在线？
+source car_env.sh                    # 2) 进 ros1 环境+指向小车 master（每个新终端一次；= roscar）
+rostopic list                        #    应看到 /obstacles /odom /scan ...
+bash gui/run_gui.sh                  # 3) 开 GUI（用当前 $DISPLAY）
 ```
 
-`roscar`（定义在 `~/.bashrc`，逻辑在 `car_env.sh`）= `conda activate ros1` + `ROS_MASTER_URI=小车` + `ROS_IP=本机`。连不上先 `bash smoke/smoke_test.sh` 分层自检。
+`source car_env.sh` = `conda activate ros1` + `ROS_MASTER_URI=小车` + `ROS_IP=本机`。连不上先 `bash smoke/smoke_test.sh` 分层自检。
 
 ---
 
@@ -48,7 +65,7 @@ while not car.is_shutdown():            # 典型模型循环
 ```
 
 - `car.obstacles()` → `Obstacles(frame_id, circles, age)`；`circles` 每个 `(x, y, r)` 米、base 系（x 前 y 左）。非阻塞、线程安全缓存。
-- `car.drive(action, magnitude=None, duration=None)` → 幅值/时长省略用默认（60 / 1.0s）。
+- `car.drive(action, magnitude=None, duration=None)` → 幅值/时长省略用默认（40 / 0.5s）。
 - `car.on_result(cb)` / `car.last_result()` → 每步完成回报 `{"action","reason","took_ms",...}`。
 - `car.stop()` 软停；`car.estop()` 硬急停（SSH 跑 estop.sh，杀 car-ros）；`car.connected()` 判活。
 
@@ -77,11 +94,15 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 
 `magnitude` 是轮速幅值（PWM 档，~<30 死区、50+ 稳转）；`duration_s` 是这一步持续时间（开环定时脉冲，非闭环到点）。
 
+### 更高层：A→B 绕障 Policy 框架（写自己的模型看这里）
+
+上面是"取圆 / 发一步"的裸接口。要做一个**完整的 A→B 绕障模型**（自带闭环 runner、可视化、录制、安全、GUI 下拉切换），用 **`carpolicy` + `mpc/`** 框架：实现一个 `carpolicy.Policy`（`plan(obs)→Action`）、在 `mpc_baseline/registry.py` 注册一行，就自动出现在 GUI 里可选。**3 步示例 + 内置两个 baseline（离散跳格 / 连续速度）见 [`mpc/README.md`](mpc/README.md)。**
+
 ---
 
 ## GUI（`gui/car_console.py`）
 
-`bash gui/run_gui.sh` 打开。三区：**win0** 障碍俯视图（前=上、车在中心、0.5m 量程环、红障碍圆、断线变橙）｜ **win1** 控制面板（参数 + 3×3 方向盘 + `↺↻` + 红 E-STOP）｜ **win2** 日志（GET/SEND/ERR 三色可勾选过滤，全量 dump 到 `gui/car_console.log`）。方向键点一下 = 走一步。全部 ROS I/O 走 `carclient`。
+`bash gui/run_gui.sh` 打开（用当前 $DISPLAY）。三区：**win0** 障碍俯视图（前=上、车在中心、红障碍圆 + 绿目标 B + 黄 MPC 预测轨迹 + 断线变橙）｜ **win1** 控制面板（**policy 下拉 + B 坐标 + execute steps + Execute/Stop** 跑 A→B；下方 3×3 方向盘 + `↺↻` 手动单步 + 红 E-STOP）｜ **win2** 日志（GET/SEND/ERR 三色过滤，全量 dump 到 `gui/car_console.log`）。**每次 Execute 跑完**自动存 `output/<日期_时间>/`：`observation.mp4`（3Hz 观测视频）+ `trajectory.png` + `run.json`。全部 ROS I/O 走 `carclient`。
 
 ---
 
@@ -112,11 +133,11 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 MCU 固件对 `set_motor` **无超时**，串口不稳时"停止"命令可能丢失 → 车锁存前进**跑飞**，ROS 层停不住，只有 `estop.sh`（新串口直灌 0）能停。所以：
 - 车端电压转发为 `/battery_v`（`std_msgs/Float32`，因为 `sensor_msgs/BatteryState` 跨 Melodic/Noetic md5 不兼容，客户端订不到 `/battery`）。
 - `CarClient.link_ok()` / GUI 顶部横幅显示 MCU 链路健康；**断链自动禁用方向键**；**空格键 = E-STOP**。
-- 保守默认：幅值 40、时长 0.8s；车端 `drive_action` 硬上限 `max_duration_s=3s`。
+- 保守默认：幅值 40、时长 0.5s；车端 `drive_action` 硬上限 `max_duration_s=3s`。
 
 ### 障碍感知节点（`obstacle_perception/`，C++）
 
-`/scan` → DBSCAN 聚类 → 外接圆 → 去冗余 → `/obstacles`。**~3.4ms/帧**（旧 Python 版 ~80ms，快 ~20×），天花板 = 雷达 ~7.7Hz，默认发 **3Hz**（`viz.launch` 里 `obstacle_circles` 的 `rate_hz`；`0`=跑满）。改完在 Nano `~/catkin_ws` 里 `catkin_make --pkg obstacle_perception` 重编。`lidar_yaw/x/y` 由 launch 传入，自动与 `base_footprint→laser` 静态变换一致。
+`/scan` → DBSCAN 聚类 → 外接圆 → 去冗余 → `/obstacles`。**~3.4ms/帧**（旧 Python 版 ~80ms，快 ~20×），天花板 = 雷达 ~7.7Hz，默认发 **3Hz**（`viz.launch` 里 `obstacle_circles` 的 `rate_hz`；`0`=跑满）。**改完一键同步到小车**：`bash obstacle_perception/deploy_to_car.sh`（上传→车上编译→重启→验证；见 `obstacle_perception/README.md`）。`lidar_yaw/x/y` 由 launch 传入，自动与 `base_footprint→laser` 静态变换一致。
 
 ---
 

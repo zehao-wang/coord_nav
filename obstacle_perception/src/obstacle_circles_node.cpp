@@ -18,7 +18,7 @@
 //
 // Params (~private):
 //   scan_topic (/scan), rate_hz (3.0; <=0 => process every new scan),
-//   eps (0.20), min_samples (5), margin (0.10), max_radius (0.30),
+//   eps (0.20), min_samples (5), margin (0.02), max_radius (0.30),
 //   frame_id (base_footprint), lidar_yaw (pi), lidar_x (0), lidar_y (0),
 //   range_min (0), range_max (0 => use scan's own).
 //
@@ -28,6 +28,7 @@
 
 #include <ros/ros.h>
 #include <sensor_msgs/LaserScan.h>
+#include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/MultiArrayDimension.h>
 #include <visualization_msgs/MarkerArray.h>
@@ -197,13 +198,19 @@ class ObstacleCirclesNode {
     pnh.param("rate_hz", rate_hz_, 3.0);
     pnh.param("eps", eps_, 0.20);
     pnh.param("min_samples", min_samples_, 5);
-    pnh.param("margin", margin_, 0.10);
+    pnh.param("margin", margin_, 0.02);
     pnh.param("max_radius", max_radius_, 0.30);
+    // temporal filter: EMA a persisting circle's position+radius so it doesn't
+    // jitter frame-to-frame. filter_alpha = weight on the previous value (0 = off,
+    // ->1 = very smooth/slow); filter_assoc = max match distance between frames (m).
+    pnh.param("filter_alpha", filter_alpha_, 0.5);
+    pnh.param("filter_assoc", filter_assoc_, 0.4);
     pnh.param("lidar_yaw", lidar_yaw_, M_PI);
     pnh.param("lidar_x", lidar_x_, 0.0);
     pnh.param("lidar_y", lidar_y_, 0.0);
     pnh.param("range_min", range_min_, 0.0);
     pnh.param("range_max", range_max_, 0.0);
+    pnh.param<std::string>("odom_topic", odom_topic_, "/odom");  // for ego-motion comp
 
     cyaw_ = std::cos(lidar_yaw_);
     syaw_ = std::sin(lidar_yaw_);
@@ -211,6 +218,7 @@ class ObstacleCirclesNode {
     pub_ = nh.advertise<std_msgs::Float32MultiArray>("obstacles", 5);
     pub_viz_ = nh.advertise<visualization_msgs::MarkerArray>("obstacles_viz", 5);
     sub_ = nh.subscribe(scan_topic_, 1, &ObstacleCirclesNode::onScan, this);
+    sub_odom_ = nh.subscribe(odom_topic_, 5, &ObstacleCirclesNode::onOdom, this);
 
     if (rate_hz_ > 0.0) {
       timer_ = nh.createTimer(ros::Duration(1.0 / rate_hz_),
@@ -219,8 +227,10 @@ class ObstacleCirclesNode {
     } else {
       ROS_INFO("obstacle_circles: process every new scan (max rate)");
     }
-    ROS_INFO("params eps=%.2f min_samples=%d margin=%.2f max_radius=%.2f",
-             eps_, min_samples_, margin_, max_radius_);
+    ROS_INFO("params eps=%.2f min_samples=%d margin=%.2f max_radius=%.2f "
+             "filter_alpha=%.2f filter_assoc=%.2f (ego-motion comp via %s)",
+             eps_, min_samples_, margin_, max_radius_, filter_alpha_, filter_assoc_,
+             odom_topic_.c_str());
   }
 
  private:
@@ -230,6 +240,75 @@ class ObstacleCirclesNode {
   }
 
   void onTimer(const ros::TimerEvent&) { process(); }
+
+  void onOdom(const nav_msgs::Odometry::ConstPtr& m) {
+    odom_x_ = m->pose.pose.position.x;
+    odom_y_ = m->pose.pose.position.y;
+    const auto& q = m->pose.pose.orientation;   // quaternion -> yaw
+    odom_yaw_ = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                           1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+    have_odom_ = true;
+  }
+
+  // A previous circle (base frame at the previous car pose) re-expressed in the
+  // CURRENT base frame, assuming it is static in odom -- i.e. only the car moved.
+  Circle predictToCurrent(const Circle& c) const {
+    const double cp = std::cos(prev_yaw_), sp = std::sin(prev_yaw_);
+    const double ox = prev_x_ + cp * c.x - sp * c.y;      // prev base -> odom
+    const double oy = prev_y_ + sp * c.x + cp * c.y;
+    const double dx = ox - odom_x_, dy = oy - odom_y_;
+    const double cc = std::cos(odom_yaw_), ss = std::sin(odom_yaw_);
+    Circle o;
+    o.x = static_cast<float>( cc * dx + ss * dy);          // odom -> current base
+    o.y = static_cast<float>(-ss * dx + cc * dy);
+    o.r = c.r;
+    return o;
+  }
+
+  // Temporal filter: ego-motion-compensate the previous circles into the current
+  // base frame, match each fresh circle to the nearest predicted one within
+  // filter_assoc, and EMA the residual (position+radius) -- so a persisting circle
+  // stops jittering as the clustered point set changes, WITHOUT lagging the car's
+  // own motion. Unmatched fresh circles pass through immediately (a new/moved
+  // obstacle is never delayed); unmatched previous ones are dropped.
+  std::vector<Circle> temporalFilter(const std::vector<Circle>& fresh) {
+    if (filter_alpha_ <= 0.0 || !have_odom_) return fresh;   // off / no ego-motion
+    if (!have_prev_) { prev_ = fresh; snapPrevPose(); have_prev_ = true; return fresh; }
+
+    std::vector<Circle> pred(prev_.size());
+    for (size_t k = 0; k < prev_.size(); ++k) pred[k] = predictToCurrent(prev_[k]);
+
+    std::vector<char> used(pred.size(), 0);
+    const float gate2 = static_cast<float>(filter_assoc_ * filter_assoc_);
+    const float a = static_cast<float>(filter_alpha_);
+    std::vector<Circle> out;
+    out.reserve(fresh.size());
+    for (const Circle& c : fresh) {
+      int best = -1;
+      float bestd2 = gate2;
+      for (size_t k = 0; k < pred.size(); ++k) {
+        if (used[k]) continue;
+        const float dx = c.x - pred[k].x, dy = c.y - pred[k].y;
+        const float d2 = dx * dx + dy * dy;
+        if (d2 < bestd2) { bestd2 = d2; best = static_cast<int>(k); }
+      }
+      if (best >= 0) {
+        used[best] = 1;
+        Circle f;
+        f.x = a * pred[best].x + (1.0f - a) * c.x;
+        f.y = a * pred[best].y + (1.0f - a) * c.y;
+        f.r = a * pred[best].r + (1.0f - a) * c.r;
+        out.push_back(f);
+      } else {
+        out.push_back(c);                                   // new obstacle: immediate
+      }
+    }
+    prev_ = out;
+    snapPrevPose();
+    return out;
+  }
+
+  void snapPrevPose() { prev_x_ = odom_x_; prev_y_ = odom_y_; prev_yaw_ = odom_yaw_; }
 
   void process() {
     if (!last_scan_) return;
@@ -273,6 +352,8 @@ class ObstacleCirclesNode {
       }
       circles = drop_redundant(circles, cluster_pts);
     }
+
+    circles = temporalFilter(circles);   // ego-motion-compensated de-jitter
 
     const double ms = (ros::WallTime::now() - t0).toSec() * 1000.0;
 
@@ -344,17 +425,25 @@ class ObstacleCirclesNode {
     pub_viz_.publish(arr);
   }
 
-  ros::Subscriber sub_;
+  ros::Subscriber sub_, sub_odom_;
   ros::Publisher pub_, pub_viz_;
   ros::Timer timer_;
   sensor_msgs::LaserScan::ConstPtr last_scan_;
   ros::Time last_done_stamp_;
 
-  std::string scan_topic_, frame_id_;
+  std::string scan_topic_, frame_id_, odom_topic_;
   double rate_hz_, eps_, margin_, max_radius_;
   int min_samples_;
   double lidar_yaw_, lidar_x_, lidar_y_, range_min_, range_max_;
   double cyaw_, syaw_;
+
+  // temporal filter (ego-motion-compensated per-circle EMA)
+  double filter_alpha_ = 0.5, filter_assoc_ = 0.4;
+  double odom_x_ = 0, odom_y_ = 0, odom_yaw_ = 0;
+  bool have_odom_ = false;
+  std::vector<Circle> prev_;
+  double prev_x_ = 0, prev_y_ = 0, prev_yaw_ = 0;
+  bool have_prev_ = false;
 
   double ema_ms_ = -1.0;
   int frames_ = 0;

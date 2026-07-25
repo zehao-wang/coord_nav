@@ -18,3 +18,5 @@ gui/car_console.log.*
 # backups (kept on the car, not versioned)
 *.bak
 *.bak.*
+smoke/results/
+output/

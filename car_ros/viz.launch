@@ -59,8 +59,13 @@
     <param name="frame_id"    value="base_footprint"/>
     <param name="eps"         value="0.20"/>
     <param name="min_samples" value="5"/>
-    <param name="margin"      value="0.10"/>
+    <param name="margin"      value="0.02"/>
     <param name="max_radius"  value="0.30"/>
+    <!-- temporal filter: ego-motion-compensated per-circle EMA so circles don't
+         jitter as the clustered points change (filter_alpha 0=off; assoc = max
+         match distance between frames, m). Uses /odom for ego-motion. -->
+    <param name="filter_alpha" value="0.5"/>
+    <param name="filter_assoc" value="0.4"/>
     <param name="lidar_yaw"   value="$(arg lidar_yaw)"/>
     <param name="lidar_x"     value="$(arg lidar_x)"/>
     <param name="lidar_y"     value="$(arg lidar_y)"/>

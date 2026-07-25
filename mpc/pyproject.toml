@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpc-baseline"
+version = "0.1.0"
+description = "MPC baseline policy (two variants) for the Jetson mecanum car, workstation side"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20",   # both variants are pure-numpy sampling MPC (no solver dep)
+]
+# Live driving also needs the sibling `carclient` package (pip install -e carclient)
+# and a ROS env (roscar). The planner/sim/eval need only the deps above.
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.3"]
+
+[tool.setuptools]
+packages = ["mpc_baseline"]

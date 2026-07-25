@@ -1,7 +1,8 @@
 #!/bin/bash
-# Launch the PySide6 car console. Activates the ros1 env (ROS Noetic + rospy)
-# and points it at the car's master, same as `roscar`.
+# Launch the PySide6 car console. Sources car_env.sh (ROS Noetic conda env + car
+# master), then runs the GUI on the current X display ($DISPLAY).
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set +u
-source /home/zwa0839/Documents/Projects_jetson/car_env.sh >/dev/null 2>&1
+source "$HERE/../car_env.sh" >/dev/null 2>&1
 set -u
-exec python3 /home/zwa0839/Documents/Projects_jetson/gui/car_console.py "$@"
+exec python3 "$HERE/car_console.py" "$@"

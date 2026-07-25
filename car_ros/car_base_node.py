@@ -2,8 +2,10 @@
 """ROS base driver for the Yahboom Rosmaster chassis.
 
 Owns the serial link to the MCU on /dev/myserial. Subscribes /cmd_vel, drives
-the wheels, and publishes /odom plus the odom->base_link transform built by
-integrating the velocity the MCU reports back.
+the wheels, and publishes /odom plus the odom->base_link transform. Odom is built
+from RAW per-motor encoder deltas (vx/vy scales calibrated vs lidar), with YAW
+integrated from the IMU GYRO (yaw_source="gyro") -- NOT the MCU-reported velocity
+and NOT the encoder differential (which under-reports yaw in a forward-arc turn).
 
 Nothing else may hold that serial port while this runs -- in particular
 claw-hwd must be stopped (`sh ~/claw.sh --disable hwd`).
@@ -37,11 +39,32 @@ class CarBase(object):
         self.cmd_timeout = rospy.get_param("~cmd_timeout", 1.0)
         self.publish_odom_tf = rospy.get_param("~publish_odom_tf", True)
         # The MCU's +x drives towards the chassis rear on this build, so ROS's
-        # "x is forward" has to be flipped on the way in and on the way back
-        # out. A 180 deg turn about z negates x and y but leaves yaw rate
-        # alone, so wz is deliberately not touched here.
+        # "x forward" is flipped in and out. A 180 deg turn about z negates x/y
+        # but leaves yaw rate alone, so wz is deliberately not touched.
         self.invert_drive = rospy.get_param("~invert_drive", False)
         self.drive_sign = -1.0 if self.invert_drive else 1.0
+
+        # Odometry from RAW wheel encoders (default): the firmware's get_motion_data
+        # has a mis-mapped wheel frame so real forward drive reports ~10% of true.
+        # We rebuild (vx,vy,wz) from per-motor deltas with the correct mapping
+        # (M1=FL, M2=-RR, M3=FR, M4=-RL) and lidar-ICP scales. ~odom_source=firmware
+        # reverts.
+        self.odom_source = rospy.get_param("~odom_source", "encoder")
+        self.k_lin_x = rospy.get_param("~k_lin_x", 0.000164)   # m per count, forward
+        self.k_lin_y = rospy.get_param("~k_lin_y", 0.000176)   # m per count, strafe
+        self.k_ang = rospy.get_param("~k_ang", 0.001056)       # rad per count, yaw
+        self._prev_enc = None
+
+        # Yaw from the IMU GYRO, not the encoders: the encoder differential is fine
+        # in a pure in-place spin but badly under-reports yaw during a forward-arc
+        # turn (planner then thinks the car is going straight and spirals off).
+        # gyro_sign = IMU z axis vs the odom CCW+ convention (measured OPPOSITE ->
+        # -1, via smoke/calib_gyro.py).
+        self.yaw_source = rospy.get_param("~yaw_source", "gyro")   # gyro | encoder
+        self.gyro_sign = rospy.get_param("~gyro_sign", -1.0)
+        self.gyro_bias = rospy.get_param("~gyro_bias", None)       # rad/s; None = auto
+        self._gbias_acc = []
+        self._gbias_n = int(self.rate_hz * 2.0)                    # ~2 s still at boot
 
         self.lock = threading.Lock()
         self.bot = Rosmaster(com=self.port)
@@ -60,6 +83,8 @@ class CarBase(object):
         self.odom_pub = rospy.Publisher("odom", Odometry, queue_size=20)
         self.imu_pub = rospy.Publisher("imu/data_raw", Imu, queue_size=20)
         self.batt_pub = rospy.Publisher("battery", BatteryState, queue_size=5)
+        # Raw per-motor encoder counts [m1,m2,m3,m4]; odom is rebuilt from these.
+        self.enc_pub = rospy.Publisher("wheel_encoders", Float32MultiArray, queue_size=10)
         self.tf_bc = tf.TransformBroadcaster()
         rospy.Subscriber("cmd_vel", Twist, self.on_cmd_vel, queue_size=10)
         # Direct per-wheel PWM for bring-up/testing: data = [FL, RL, FR, RR],
@@ -70,13 +95,10 @@ class CarBase(object):
 
         rospy.on_shutdown(self.shutdown)
 
-    # Wheel-level drive. The rear motor plugs are keyed with their polarity
-    # physically reversed (a positive command spins them backwards), which the
-    # MCU kinematics cannot know about -- through set_car_motion a strafe came
-    # out as pure rotation. So mecanum mixing happens here and the wheels are
-    # driven as raw PWM with M2/M4 negated. This also bypasses the firmware's
-    # internal motion controller entirely, which once ran away on a wz command
-    # and ignored velocity-level stops (2026-07-22).
+    # Wheel-level drive. Rear motor plugs are polarity-reversed in hardware (a
+    # positive command spins them backwards), so mecanum mixing happens here and
+    # wheels are driven as raw PWM with M2/M4 negated. Also bypasses the firmware
+    # motion controller entirely (it once ran away on wz and ignored velocity stops).
     PWM_PER_MPS = 200.0   # ~0.4 m/s -> PWM 80; the lidar loop absorbs scale error
     WZ_ARM = 0.5          # wz mixing arm, m/rad (wz is banned at the bridge anyway)
 
@@ -91,10 +113,8 @@ class CarBase(object):
 
     def _set_wheels(self, fl, rl, fr, rr):
         # Direct per-wheel drive, forward-positive. Motor ports on this build:
-        #   M1 = front-left,  M2 = REAR-RIGHT,
-        #   M3 = front-right, M4 = REAR-LEFT
-        # i.e. the two REAR ports are swapped vs the obvious order (verified
-        # per-wheel 2026-07-23). The rear plugs are also polarity-reversed, so a
+        # M1=FL, M2=REAR-RIGHT, M3=FR, M4=REAR-LEFT (the two rear ports are swapped
+        # vs the obvious order) and the rear plugs are polarity-reversed, so a
         # forward command is negated on the rear motors. Net: rl -> M4, rr -> M2.
         clip = lambda v: max(-100, min(100, int(round(v))))
         self.bot.set_motor(clip(fl), clip(-rr), clip(fr), clip(-rl))
@@ -108,8 +128,7 @@ class CarBase(object):
         with self.lock:
             self._set_wheels(fl, rl, fr, rr)
             self.last_cmd_ts = rospy.Time.now()
-            # Reuse the cmd_vel watchdog: if wheel_cmd goes quiet for
-            # cmd_timeout, check_watchdog brakes via _set_motors(0,0,0).
+            # Reuse the cmd_vel watchdog: wheel_cmd going quiet for cmd_timeout brakes.
             self.moving = bool(fl or rl or fr or rr)
 
     def on_cmd_vel(self, msg):
@@ -140,8 +159,7 @@ class CarBase(object):
             dt = (now - last).to_sec()
             last = now
             if dt <= 0.0 or dt > 1.0:
-                # First tick, or we were starved -- integrating this would
-                # teleport the robot. Skip and pick up on the next one.
+                # First tick or starved: integrating this dt would teleport odom.
                 rate.sleep()
                 continue
 
@@ -157,9 +175,35 @@ class CarBase(object):
                 ax, ay, az = self.bot.get_accelerometer_data()
                 gx, gy, gz = self.bot.get_gyroscope_data()
                 volt = self.bot.get_battery_voltage()
+                enc = self.bot.get_motor_encoder()          # raw [m1,m2,m3,m4] counts
 
-            # Integrate in the odom frame. The chassis is mecanum, so vy is
-            # real lateral motion and has to be carried through.
+            # Rebuild body velocity from raw encoder deltas with the correct wheel
+            # mapping (overrides the firmware's broken-forward get_motion_data).
+            if self.odom_source == "encoder" and self._prev_enc is not None and dt > 0:
+                d0 = enc[0] - self._prev_enc[0]
+                d1 = enc[1] - self._prev_enc[1]
+                d2 = enc[2] - self._prev_enc[2]
+                d3 = enc[3] - self._prev_enc[3]
+                fl, rr, fr, rl = d0, -d1, d2, -d3           # M1=FL,M2=-RR,M3=FR,M4=-RL
+                vx = self.k_lin_x * (fl + rl + fr + rr) / 4.0 / dt
+                vy = self.k_lin_y * (-fl + rl + fr - rr) / 4.0 / dt
+                wz = self.k_ang * (-fl - rl + fr + rr) / 4.0 / dt
+            self._prev_enc = enc
+
+            # Yaw rate: prefer the gyro (see __init__). Estimate rest bias from the
+            # first ~2 s at boot, then wz = sign*(gz - bias); fall back to encoder wz
+            # until the bias is settled.
+            if self.yaw_source == "gyro" and self.gyro_bias is None:
+                self._gbias_acc.append(gz)
+                if len(self._gbias_acc) >= self._gbias_n:
+                    self.gyro_bias = sum(self._gbias_acc) / len(self._gbias_acc)
+                    rospy.loginfo("gyro yaw bias = %.5f rad/s (n=%d)",
+                                  self.gyro_bias, len(self._gbias_acc))
+            if self.yaw_source == "gyro" and self.gyro_bias is not None:
+                wz = self.gyro_sign * (gz - self.gyro_bias)
+
+            # Integrate in the odom frame. Mecanum chassis -> vy is real lateral
+            # motion and must be carried through.
             delta_x = (vx * math.cos(self.th) - vy * math.sin(self.th)) * dt
             delta_y = (vx * math.sin(self.th) + vy * math.cos(self.th)) * dt
             self.x += delta_x
@@ -185,8 +229,8 @@ class CarBase(object):
             odom.twist.twist.linear.x = vx
             odom.twist.twist.linear.y = vy
             odom.twist.twist.angular.z = wz
-            # Wheel odometry drifts; give the consumers a non-zero covariance
-            # so they weight it sanely instead of trusting it absolutely.
+            # Wheel odometry drifts; non-zero covariance so consumers don't trust
+            # it absolutely.
             odom.pose.covariance[0] = 1e-3
             odom.pose.covariance[7] = 1e-3
             odom.pose.covariance[35] = 1e-2
@@ -213,6 +257,8 @@ class CarBase(object):
             batt.voltage = volt
             batt.present = volt > 0.0
             self.batt_pub.publish(batt)
+
+            self.enc_pub.publish(Float32MultiArray(data=[float(e) for e in enc]))
 
             rate.sleep()
 

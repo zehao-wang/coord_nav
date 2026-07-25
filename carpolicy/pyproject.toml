@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carpolicy"
+version = "0.1.0"
+description = "Shared Policy interface (Observation -> Action) for the Jetson car -- MPC, learning-based, and other policies all implement it"
+requires-python = ">=3.8"
+dependencies = []      # pure-Python interface, no deps
+
+[tool.setuptools]
+packages = ["carpolicy"]

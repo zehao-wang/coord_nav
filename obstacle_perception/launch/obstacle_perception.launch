@@ -14,8 +14,11 @@
   <!-- clustering params (match perception_server.py defaults) -->
   <arg name="eps"         default="0.20"/>
   <arg name="min_samples" default="5"/>
-  <arg name="margin"      default="0.10"/>
+  <arg name="margin"      default="0.02"/>
   <arg name="max_radius"  default="0.30"/>
+  <arg name="filter_alpha" default="0.5"/>   <!-- temporal EMA (0=off; ego-motion-comp via /odom) -->
+  <arg name="filter_assoc" default="0.4"/>   <!-- max frame-to-frame match distance (m) -->
+  <arg name="odom_topic"   default="/odom"/>
 
   <!-- laser->base 2D transform; MUST match the base_footprint->laser static
        transform in viz.launch (there: xyz 0 0 0.15, yaw pi). -->
@@ -32,6 +35,9 @@
     <param name="min_samples" value="$(arg min_samples)"/>
     <param name="margin"      value="$(arg margin)"/>
     <param name="max_radius"  value="$(arg max_radius)"/>
+    <param name="filter_alpha" value="$(arg filter_alpha)"/>
+    <param name="filter_assoc" value="$(arg filter_assoc)"/>
+    <param name="odom_topic"   value="$(arg odom_topic)"/>
     <param name="lidar_yaw"   value="$(arg lidar_yaw)"/>
     <param name="lidar_x"     value="$(arg lidar_x)"/>
     <param name="lidar_y"     value="$(arg lidar_y)"/>
