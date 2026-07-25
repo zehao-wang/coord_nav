@@ -228,17 +228,18 @@ class LiveConfig:
     tick: TickConfig = field(default_factory=TickConfig)
     execute_steps: int = 1            # planned steps to apply before re-planning (1 = tight
                                       # closed loop; >1 = N steps open-loop). Safety runs each step
-    magnitude: float = 30.0           # PWM. Conservative but ACTUALLY FUNCTIONAL under the
-                                      # calibrated plant: v_max (30-14)/72.1 = 0.222 m/s, yaw up
-                                      # to 0.863 rad/s, turn radius 0.26 m.
-                                      # Was 20 ("start small"), chosen when the old proportional
-                                      # model claimed 20 -> 0.10 m/s. Measured, 20 gives 0.083 m/s
-                                      # and only 0.176 rad/s of yaw (radius 0.47 m) -- barely above
-                                      # the magnitude-17.4 floor where yaw becomes exactly zero --
-                                      # and scores 0.333 on the tight suite over 20 seeds against
-                                      # 0.992 at 30 and 0.975 at 40. Failures at 20 are timeouts,
-                                      # not collisions: the car is simply too slow to steer.
-                                      # 40 is the value the five 5 m on-car runs used.
+    magnitude: float = 40.0           # PWM. The value the car is actually VALIDATED at: five
+                                      # 5 m runs reached B (final distance 0.05-0.11 m), and it
+                                      # is the only magnitude the yaw feedforward was measured
+                                      # at end to end. Gives v_max (40-14)/72.1 = 0.361 m/s,
+                                      # full yaw to w_max 1.2, turn radius 0.30 m.
+                                      # Tight suite over 20 seeds: 0.333 at magnitude 20 (all
+                                      # timeouts -- too slow to steer, and only 0.176 rad/s of
+                                      # yaw), 0.992 at 30, 0.975 at 40. Below magnitude 17.4 the
+                                      # achievable yaw is exactly zero and build_live_cfg
+                                      # refuses. "Start small" was 20, chosen when the old
+                                      # proportional model claimed it meant 0.10 m/s; measured,
+                                      # it is 0.083 m/s.
     estop_on_link_loss: bool = True   # estop (not soft stop) if MCU link drops
     link_wait_s: float = 3.0          # refuse to drive if the MCU link isn't healthy within this
     collision_abort: bool = True      # stop if an obstacle surface reaches the footprint

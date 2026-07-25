@@ -57,8 +57,9 @@ class PolicyRunner(object):
 
     def __init__(self, policy, cfg, live_cfg, obs_cfg, client, log=print,
                  pose_source="odom", on_step=None, collision_estop=True,
-                 tick_log_dir=None, tick_log=True):
+                 tick_log_dir=None, tick_log=True, check_sensors=True):
         self.tick_log_dir = tick_log_dir   # None -> output/<start time>/
+        self.check_sensors = check_sensors  # verify the MCU read path before driving
         self.tick_log_on = tick_log
         self.cfg = cfg
         self.live = live_cfg
@@ -201,6 +202,21 @@ class PolicyRunner(object):
         goal = np.array([start[0] + gx * c - gy * s, start[1] + gx * s + gy * c])
         self.log("A->B: policy=%s pose=%s B=(fwd %.2f, left %.2f) mag=%.0f" % (
             self.label, self.pose_source, gx, gy, self.live.magnitude))
+
+        # The MCU's READ path must be alive, not just its voltage plausible. A wedged
+        # serial read republishes the last value forever: link_ok() stays True off a
+        # frozen voltage while the gyro is stuck and odom yaw ramps ~60 deg/s. That
+        # happened on 2026-07-25 and the car spun in place with the client reporting
+        # a healthy link. Checked with the car STATIONARY, before any motion.
+        if self.check_sensors:
+            live, rep = self.client.sensors_live()
+            if not live:
+                raise RuntimeError(
+                    "MCU sensors are not live -- refusing to drive. %s\n"
+                    "A frozen feed means the serial READ path is wedged while WRITES "
+                    "still reach the motors, i.e. commands land but nothing measures "
+                    "them. Power-cycle the car; restarting car-ros may not clear it."
+                    % rep)
 
         # Arm the link-loss interlock before any motion.
         if self.live.estop_on_link_loss and not self._wait_link(self.live.link_wait_s):

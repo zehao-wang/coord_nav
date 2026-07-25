@@ -405,9 +405,72 @@ class CarClient(object):
 
     def link_ok(self):
         """True if the MCU serial link looks alive (fresh, plausible voltage).
-        False means motor commands may be lost -- use estop(), not stop()."""
+        False means motor commands may be lost -- use estop(), not stop().
+
+        NOT sufficient before driving: a wedged serial READ path keeps republishing
+        the last value forever, so the voltage stays plausible and this returns
+        True while every sensor is frozen. Call sensors_live() as well."""
         v = self.battery()
         return v is not None and v > self.MIN_LINK_VOLT
+
+    def sensors_live(self, secs=3.0, gyro_still_max=0.05):
+        """Is the MCU's READ path actually alive? Call with the car STATIONARY.
+
+        Returns (ok, report). Subscribes temporarily -- nothing is left running.
+
+        On 2026-07-25 the MCU serial read path wedged while the WRITE path kept
+        working. /imu/data_raw, /wheel_encoders and /battery_v each froze at a
+        single value (gyro stuck at -1.036 rad/s), so odom yaw ramped 178 deg in
+        3 s with the car standing still, an in-place "calibration" measured that
+        ramp as a constant 1.55 rad/s at every PWM from 22 to 70, and the car sat
+        there spinning while link_ok() reported healthy off a frozen 10.00 V.
+        Two independent checks catch it:
+          * every MCU topic must produce MORE THAN ONE distinct value -- a frozen
+            feed is bit-identical, real sensors always dither;
+          * the gyro must read ~0 while the car is still.
+        """
+        import collections
+        from sensor_msgs.msg import Imu
+        seen = collections.defaultdict(list)
+        subs = [
+            rospy.Subscriber("/imu/data_raw", Imu,
+                             lambda m: seen["imu"].append(round(m.angular_velocity.z, 9))),
+            rospy.Subscriber("/wheel_encoders", Float32MultiArray,
+                             lambda m: seen["encoders"].append(tuple(m.data))),
+            rospy.Subscriber("/battery_v", Float32,
+                             lambda m: seen["battery"].append(round(m.data, 6))),
+        ]
+        try:
+            time.sleep(secs)
+        finally:
+            for s in subs:
+                try:
+                    s.unregister()
+                except Exception:
+                    pass
+
+        report, ok = {}, True
+        for name in ("imu", "encoders", "battery"):
+            vals = seen[name]
+            distinct = len(set(vals))
+            alive = len(vals) > 0 and (distinct > 1 or len(vals) <= 3)
+            report[name] = {"msgs": len(vals), "distinct": distinct, "alive": alive}
+            if len(vals) == 0:
+                report[name]["problem"] = "no messages"
+                ok = False
+            elif distinct <= 1 and len(vals) > 3:
+                report[name]["problem"] = "FROZEN at a single value (%r)" % (vals[0],)
+                ok = False
+        gz = seen["imu"]
+        if gz:
+            bias = sum(gz) / len(gz)
+            report["gyro_still_bias"] = bias
+            if abs(bias) > gyro_still_max:
+                report["gyro_problem"] = (
+                    "gyro reads %.3f rad/s (%.0f deg/s) while STILL -- odom yaw will "
+                    "ramp" % (bias, math.degrees(bias)))
+                ok = False
+        return ok, report
 
     # -- drive ------------------------------------------------------------
     def drive(self, action, magnitude=None, duration=None):

@@ -3,6 +3,57 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.8 - 2026-07-25 - INCIDENT: wedged MCU read path; sensor-liveness gate added
+
+**What happened.** An attempted re-calibration produced impossible numbers -- the
+in-place yaw rate came out at 1.55 rad/s for *every* PWM from 22 to 70, PWM 40 and
+60 agreeing to three decimals. Diagnosis: the MCU serial READ path had wedged while
+the WRITE path kept working. Every MCU-sourced topic was frozen at a single value
+over a 6 s sample:
+
+    imu   60 msgs, 1 distinct value   stuck at -1.0360 rad/s
+    enc   60 msgs, 1 distinct value   stuck at [-1049, -1343, 1395, 1273]
+    batt  15 msgs, 1 distinct value   stuck at 10.00 V
+
+Consequences, all of which I initially misread:
+
+- odom yaw ramped **+178 deg in 3.0 s with the car standing still**, integrating the
+  stuck gyro. The "1.55 rad/s at every PWM" was that ramp, not the car turning.
+- the encoders never moved, so I concluded the wheels were not turning -- **they
+  were**: the operator saw the car spinning in place the whole time.
+- `link_ok()` reported healthy throughout, because it only asks whether the voltage
+  is plausible and 10.00 V is plausible. A frozen reading passes it.
+
+The car was hard-estopped (`estop.sh`, new serial, writes 0 directly and kills
+car-ros) and confirmed stopped.
+
+**My error was continuing to command motion while the data contradicted itself.**
+PWM 40 and 60 producing identical yaw, encoders not counting, and voltage showing
+zero sag under a four-motor load are each individually enough to stop and diagnose.
+Sensors first, motors second.
+
+**The gate.** `CarClient.sensors_live(secs=3.0, gyro_still_max=0.05)` -- call with
+the car stationary; it subscribes temporarily, leaves nothing running, and returns
+`(ok, report)`. Two independent tests, because either alone can be fooled:
+
+- every MCU topic must produce **more than one distinct value**; a wedged feed is
+  bit-identical while real sensors always dither;
+- the gyro must read ~0 while the car is still.
+
+`PolicyRunner` now refuses to start when it fails (`check_sensors=True`), before any
+motion and before the link-loss interlock, and `calibration/calib_model.py` refuses
+to drive. Both say to power-cycle: restarting car-ros may not clear a wedged serial.
+
+**`LiveConfig.magnitude` 30 -> 40**, the value the car is actually validated at (five
+5 m runs, final distance 0.05-0.11 m) and the only magnitude the yaw feedforward was
+measured at end to end. v_max 0.361 m/s, full yaw to w_max 1.2, turn radius 0.30 m.
+Tight suite over 20 seeds is 0.975 at 40 against 0.992 at 30 -- within noise, and 40
+carries the on-car evidence.
+
+Re-calibration is still OUTSTANDING: the pack was at 10.00 V, below the 10.5 V the
+shipped constants came from, so it would not have pinned `pwm_per_mps` at a working
+voltage even had the link been healthy.
+
 ## 0.9.7 - 2026-07-25 - default magnitude 30; repo-wide stale-claim sweep
 
 **`LiveConfig.magnitude` 20 -> 30.** The old 20 was chosen when the proportional

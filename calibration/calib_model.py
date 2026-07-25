@@ -244,6 +244,19 @@ def main():
         time.sleep(0.2)
     if not car.link_ok():
         print("MCU link not healthy -- refusing to drive"); sys.exit(1)
+    # A wedged MCU serial read path republishes the last value forever, so a
+    # plausible voltage proves nothing. Calibrating against frozen sensors produces
+    # confident nonsense: on 2026-07-25 it "measured" a constant 1.55 rad/s at every
+    # PWM from 22 to 70, which was the stuck gyro's drift, not the car turning.
+    live, rep = car.sensors_live()
+    if not live:
+        print("MCU sensors are NOT live -- refusing to drive:")
+        for k in sorted(rep):
+            print("   %-16s %s" % (k, rep[k]))
+        print("Power-cycle the car; restarting car-ros may not clear a wedged serial.")
+        sys.exit(1)
+    print("sensors live: %s" % {k: v.get("distinct") for k, v in rep.items()
+                                if isinstance(v, dict)})
     volt = car.battery()
     print("battery %.1f V" % volt)
     if volt < 10.5:

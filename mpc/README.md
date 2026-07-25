@@ -51,7 +51,7 @@ bash gui/run_gui.sh          # 连车的 master，用当前 $DISPLAY（先按顶
 ```bash
 roscar
 python ../smoke/policy_run.py --variant 1 --bx 3 --by 0 --pose odom --mag 40   # 跑一次+存图+陀螺校验
-python scripts/run_live.py --variant 2 --magnitude 30                          # 变种2 baseline
+python scripts/run_live.py --variant 2 --magnitude 40                          # 变种2 baseline
 ```
 
 ---
@@ -137,7 +137,7 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | `TickConfig.rate_hz` | 3.0 | **全局唯一频率**，必须等于车端感知率（`viz.launch` 的 `obstacle_circles rate_hz`）|
 | `TickConfig.action_ticks` | 1.5 | 一条指令在车上的存活时长（tick 数）。>1 使单次丢包不抖动，<2 使连丢两次后刹车 |
 | `GoalConfig.goal_dist / goal_y` | 1.0 / 0.0 | B 相对起点：前 x、左 y（米）；GUI/实验默认用 3.0 |
-| `LiveConfig.magnitude` | **30** | 实车 PWM 幅值 → v_max 0.222 m/s、可用偏航 0.863 rad/s、转弯半径 0.26 m。**摩擦阈值 14 PWM**，**17.4 以下偏航恒为 0**（`build_live_cfg` 会拒绝）。紧场景 20 seeds 成功率：mag 20 → **0.333**（全是超时，太慢转不动）／30 → **0.992**／40 → 0.975。实车五次 5m 跑用的是 40 |
+| `LiveConfig.magnitude` | **40** | 实车 PWM 幅值 → v_max 0.361 m/s、可用偏航到满 1.2 rad/s、转弯半径 0.30 m。**实车验证过的就是 40**（五次 5m 跑全部到达）。**摩擦阈值 14 PWM**，**17.4 以下偏航恒为 0**（`build_live_cfg` 会拒绝）。紧场景 20 seeds：mag 20 → **0.333**（全是超时，太慢转不动）／30 → 0.992／40 → 0.975 |
 | `LiveConfig.collision_abort` | True | 逼近碰撞软停。**GUI 现在默认开**——曾默认关，结果一次实车跑把 130mm footprint 的 126mm 开进了障碍圆里 1 秒。软停不杀 car-ros |
 | `RobotConfig.pwm_per_mps / pwm_offset` | 72.1 / 14.0 | **实测**仿射被控对象 `轮速=(PWM−14)/72.1`。见下面的标定小节 |
 | `RobotConfig.wz_arm`, `Variant1Config.steer_arm` | 0.196 | **实测**偏航臂（米），使指令 w == 实际偏航率 |
