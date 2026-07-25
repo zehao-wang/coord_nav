@@ -302,6 +302,20 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
             "continuous (v,w) config or 2/'grid'/'discrete' for the mecanum-action "
             "config. (This used to fall through to variant 2, handing a velocity "
             "policy a Variant2Config with no .v_max/.mppi.)" % (variant,))
+    if v in ("1", "vw", "v1", "velocity"):
+        # Below the magnitude where v clears yaw_deadband*arm/(1-min_inner_frac),
+        # the policy's achievable-yaw clip is identically 0: the planner would drive
+        # dead straight with no steering channel, so the obstacle cost could not
+        # avoid anything. Refuse rather than roll out of the driveway in a line.
+        v_floor = c.robot.yaw_deadband * c.steer_arm / max(1e-6, 1.0 - c.min_inner_frac)
+        if c.v_max <= v_floor:
+            raise ValueError(
+                "magnitude %.0f gives v_max %.3f m/s, at or below the %.3f m/s where "
+                "the car can produce ANY yaw (yaw_deadband %.3f rad/s x arm %.3f). The "
+                "planner would drive straight and could not steer around anything. Use "
+                "magnitude >= %.0f; 40 is the validated value."
+                % (magnitude, c.v_max, v_floor, c.robot.yaw_deadband, c.steer_arm,
+                   v_floor * c.robot.pwm_per_mps + c.robot.pwm_offset + 1))
     c.goal.goal_dist = goal_dist
     c.goal.goal_y = goal_y
     c.goal.goal_tol = goal_tol

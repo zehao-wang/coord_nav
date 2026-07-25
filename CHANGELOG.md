@@ -3,6 +3,72 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.6 - 2026-07-25 - safety: the guard shipped OFF, and the tick delay was uncompensated
+
+The review's synthesis, after re-measuring everything against 0.9.5. Three of these
+are consequences of changes made earlier in this same session.
+
+### SAFETY: the GUI shipped the imminent-collision guard unchecked
+
+`gui/car_console.py` set the checkbox to False, overriding `LiveConfig.collision_abort
+= True`. The operator's run `output/2026-07-25_20-01-44` is the evidence that it
+matters -- measured from its own tick log against `robot_radius` 0.13 m:
+
+    tick 30   nearest 0.118   dmem 0.104   footprint  26 mm inside   v=0.361 w=-0.539
+    tick 31   nearest 0.089   dmem 0.026   footprint 104 mm inside   v=0.361 w=-1.158
+    tick 32   nearest 0.097   dmem 0.004   footprint 126 mm inside   v=0.361 w=+0.293
+
+126 of 130 mm of the footprint inside an obstacle circle, at `v_max`, for three
+consecutive ticks (1 s), with nothing intervening. The guard threshold is
+`robot_radius + collision_margin` = 0.130 and would have fired on all three. Now
+checked by default; `collision_estop=False` already makes it a soft stop, so a false
+trip costs a stop, not a killed `car-ros`.
+
+### The one-tick dispatch delay was compensated by nobody
+
+0.7.0 introduced command buffering (plan at tick N, dispatch at N+1) but neither
+policy advanced its start state by the command already in flight, and
+`sim.run_episode` applies a plan in the tick it was planned -- so the offline suite
+never modelled the delay it had introduced. At the live caps that dead time is
+**0.12 m of travel and 23 deg of heading per tick**, against `robot_radius` 0.13 +
+`extra_margin` 0.10. Reproduced over 120 episodes at the live config:
+
+    no buffer (what the sim modelled)   success 0.975   collide 0.025
+    buffered, UNcompensated (the car)   success 0.892   collide 0.033
+    buffered + compensated (fixed)      success 0.975   collide 0.025
+
+The runner now plans from `rollout_body(pose, cmd_in_flight, period)` rather than the
+measured pose. The field update still uses the MEASURED pose -- that is where the scan
+was taken. Offline and live now agree numerically again, which is why the suite is
+left unbuffered rather than duplicating the compensation in two places.
+
+### Below magnitude 17.4 the achievable-yaw clip is identically zero
+
+0.9.5's fix clips the policy to `yaw_gain*max(0, mix_limit - yaw_deadband)`, which is
+0 whenever `v <= yaw_deadband*arm/(1-min_inner_frac)` = 0.048 m/s, i.e. magnitude
+<= 17.4. The planner would drive dead straight with no steering channel at all, and
+the GUI's magnitude spinbox stepped by 5 from 0, putting that one click away.
+`build_live_cfg` now refuses with the reason and the minimum usable magnitude, and the
+GUI spinbox floor is 20.
+
+### Two smaller ones
+
+- **A discrete hop's life on the car was whatever the policy asked for.**
+  `--step-duration 3.0` was accepted and equals `drive_action_node`'s own
+  `max_duration_s`, so a runner killed between ticks left 3 s -- nine ticks -- of
+  open-loop motion. The runner now hands the car `tick.action_duration` (0.5 s, 1.5
+  ticks) regardless; `step_duration` stays a planning quantity.
+- **`WPIN` could not fire at the shipped magnitude.** It tested `|w| >= w_max`, but
+  after 0.9.5 the policy cannot emit more than 0.176 at magnitude 20 or 0.863 at 30,
+  so the flag that means "cannot turn enough" was dead exactly where the car cannot
+  turn. It now compares against the yaw actually available at that speed.
+
+Offline unchanged: v1 1.000, v2 0.833 on the shipped config.
+
+**Still open** (from the review's own list, and from the operator's runs): `ZERO`
+appearing transiently near the goal; ~45 lower-severity findings, mostly stale numbers
+in comments left by this session's repeated re-measurement.
+
 ## 0.9.5 - 2026-07-25 - review round: the yaw feedforward was a no-op below magnitude 40
 
 A 5-lens adversarial review of `77b1c96..HEAD` returned 53 findings. The important

@@ -359,18 +359,35 @@ class PolicyRunner(object):
                         self._advance_dr((v, 0.0, w), period)
                         self._emit_step(pose, goal, gd, obs, v=v, w=w, traj=act.traj)
                     else:
-                        aid, mag, dur = ctl
-                        self.act.step(aid, mag, dur)          # non-blocking
+                        aid, mag, _dur = ctl
+                        # life on the car = the tick's action_duration (>1 tick so the
+                        # next tick supersedes it, <2 so it expires if we stop sending).
+                        # NOT the policy's duration: that is a planning quantity and
+                        # accepting it unbounded allowed 3 s of open-loop motion.
+                        self.act.step(aid, mag, tick.action_duration)   # non-blocking
                         self._cmd_body = tuple(action_body_velocity(aid, mag, self.cfg.robot))
                         self._advance_dr(self._cmd_body, period)
                         self._emit_step(pose, goal, gd, obs, action=aid, traj=act.traj)
 
                 # ---- PLAN this tick's observation -> the action for the NEXT tick.
+                # Plan from where the car WILL be when the plan is dispatched, not
+                # from where it is now: the command dispatched above runs for this
+                # whole tick, so by the time this plan reaches the wheels the car has
+                # already moved 0.12 m and turned up to 23 deg at the live caps.
+                # Ignoring that dead time cost 3 collisions and 10 outcome flips in
+                # 120 offline episodes; advancing the start state recovers all of them.
                 t_plan0 = time.monotonic()
                 replanned = plan is None or idx >= min(n_exec, len(plan[0]))
                 if replanned:
-                    self.field.update(obs.circles, pose)
-                    act = self.policy.plan(Observation(pose, goal, obs.circles, self.field))
+                    self.field.update(obs.circles, pose)   # measured pose: that is
+                                                           # where the scan was taken
+                    plan_pose = pose
+                    if self._cmd_body is not None:
+                        plan_pose = rollout_body(
+                            pose, np.asarray(self._cmd_body, float).reshape(1, 1, 3),
+                            period)[0, 0]
+                    act = self.policy.plan(
+                        Observation(plan_pose, goal, obs.circles, self.field))
                     plan, idx = (self._controls_of(act), act), 0
                 controls, act = plan
                 pending = (controls[idx], act, obs.frame_id)
@@ -490,6 +507,16 @@ class PolicyRunner(object):
                 "cum_r_xy": (self._cum[0] / self._cum[1]) if self._cum[1] > 1e-6 else None,
                 "cum_r_yaw": (self._cum[2] / self._cum[3]) if self._cum[3] > 1e-4 else None}
 
+    def _w_available(self, v):
+        """Largest |w| the policy may emit at this speed (mirrors _perturb's clip)."""
+        arm = max(getattr(self.cfg, "steer_arm", 1e-6), 1e-6)
+        frac = getattr(self.cfg, "min_inner_frac", 0.0)
+        rb = self.cfg.robot
+        raw = (1.0 - frac) * abs(v) / arm
+        achievable = getattr(rb, "yaw_gain", 1.0) * max(
+            0.0, raw - getattr(rb, "yaw_deadband", 0.0))
+        return min(getattr(self.cfg, "w_max", 1e9), achievable)
+
     def _limits_str(self):
         """The command box, so a reader can tell a pinned command from a free one."""
         if self.action_space == "velocity":
@@ -517,7 +544,12 @@ class PolicyRunner(object):
             v, w = d.get("v", 0.0), d.get("w", 0.0)
             if abs(v) < 1e-6 and abs(w) < 1e-6:
                 f.append("ZERO")           # the documented "car froze" failure
-            if abs(w) >= getattr(self.cfg, "w_max", 1e9) - 1e-6:
+            # Compare against the yaw actually AVAILABLE at this speed, not w_max:
+            # the policy is clipped to yaw_gain*(mix_limit - yaw_deadband), which is
+            # below w_max at every magnitude under ~35, so testing w_max left this
+            # flag -- the one that says "cannot turn enough" -- dead exactly where
+            # the car cannot turn.
+            if abs(w) >= self._w_available(v) - 1e-6:
                 f.append("WPIN")           # cannot turn enough -> the spiral failure
             # NOT flagging v at v_max: a goal-seeking policy sits there almost every
             # tick, so it is noise that buries the flags that mean something.

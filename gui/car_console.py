@@ -350,7 +350,9 @@ class MainWindow(QMainWindow):
         # rate_hz in viz.launch) -- the runner and this view both advance one frame per
         # tick, so a different number here would just alias against the real clock.
         self.hz_spin = self._spin(0.5, 10.0, 0.5, mpc_config.TickConfig.rate_hz)
-        self.mag_spin = self._spin(0.0, 80.0, 5.0, 40.0)    # base magnitude (cap 80)
+        # floor 20: below ~17.4 the planner's achievable yaw is 0 (build_live_cfg
+        # raises), and 40 is the validated value.
+        self.mag_spin = self._spin(20.0, 80.0, 5.0, 40.0)   # base magnitude (cap 80)
         self.dur_spin = self._spin(0.1, 3.0, 0.1, 0.5)      # step move = exact run time, no compensation
         self.diag_spin = self._spin(1.0, 4.0, 0.1, 1.6)     # diagonal magnitude multiplier
         self.strafe_spin = self._spin(1.0, 4.0, 0.1, 1.2)   # strafe magnitude multiplier
@@ -431,7 +433,12 @@ class MainWindow(QMainWindow):
         self.collision_cb = QCheckBox("collision guard (soft-stop)")
         # OFF by default: obstacle circles already carry margin + planner inflates, so the
         # guard is redundant and false-trips mid-go-around. E-STOP (spacebar) is the backstop.
-        self.collision_cb.setChecked(False)
+        # ON by default. It was off, and run output/2026-07-25_20-01-44 drove 126 mm
+        # of the 130 mm footprint into an obstacle at v_max for three ticks (1 s)
+        # with nothing intervening -- the guard would have fired on all three.
+        # collision_estop=False below makes this a SOFT stop, so a false trip costs
+        # a stop, not a killed car-ros.
+        self.collision_cb.setChecked(True)
         # planned steps to apply before re-planning (1 = tight closed loop)
         self.exec_steps_spin = self._spin(1.0, 10.0, 1.0, 1.0)
         self.exec_steps_spin.setDecimals(0)
