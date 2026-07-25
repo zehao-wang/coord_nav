@@ -249,6 +249,13 @@ class LiveConfig:
     # soft stop would latch the wheels).
 
 
+# The motors' friction threshold rises as the pack drains: measured 14.0 PWM at
+# 10.5 V and 17.0 at 9.8 V, about -4.3 PWM per volt. Safety checks that must hold on
+# a TIRED battery add this much to the shipped offset. (Speed accuracy does not need
+# it -- the closed loop absorbs the whole 9.5-12 V spread; see calibration/README.md.)
+PWM_OFFSET_LOW_BATT_MARGIN = 4.5
+
+
 def _v_of_pwm(pwm, robot):
     """Speed ceiling for a PWM ceiling, through the affine plant."""
     return max(0.0, (pwm - robot.pwm_offset) / robot.pwm_per_mps)
@@ -321,15 +328,20 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
         # the policy's achievable-yaw clip is identically 0: the planner would drive
         # dead straight with no steering channel, so the obstacle cost could not
         # avoid anything. Refuse rather than roll out of the driveway in a line.
+        # Use a DEPLETED-pack offset for this check, not the shipped one. The friction
+        # threshold moves with battery voltage -- measured 17.0 PWM at 9.8 V and 14.0
+        # at 10.5, i.e. about -4.3 PWM per volt -- so a pack at 9.5 V needs ~18.3 and
+        # the shipped 14.0 would wave through a magnitude that cannot steer at all.
         v_floor = c.robot.yaw_deadband * c.steer_arm / max(1e-6, 1.0 - c.min_inner_frac)
-        if c.v_max <= v_floor:
+        worst_offset = c.robot.pwm_offset + PWM_OFFSET_LOW_BATT_MARGIN
+        if (magnitude - worst_offset) / c.robot.pwm_per_mps <= v_floor:
             raise ValueError(
                 "magnitude %.0f gives v_max %.3f m/s, at or below the %.3f m/s where "
                 "the car can produce ANY yaw (yaw_deadband %.3f rad/s x arm %.3f). The "
-                "planner would drive straight and could not steer around anything. Use "
-                "magnitude >= %.0f; 40 is the validated value."
+                "planner would drive straight and could not steer around anything on a "
+                "depleted pack. Use magnitude >= %.0f; 40 is the validated value."
                 % (magnitude, c.v_max, v_floor, c.robot.yaw_deadband, c.steer_arm,
-                   v_floor * c.robot.pwm_per_mps + c.robot.pwm_offset + 1))
+                   v_floor * c.robot.pwm_per_mps + worst_offset + 1))
     c.goal.goal_dist = goal_dist
     c.goal.goal_y = goal_y
     c.goal.goal_tol = goal_tol
