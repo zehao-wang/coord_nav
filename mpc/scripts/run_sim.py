@@ -83,7 +83,8 @@ def main():
     ap.add_argument("--magnitude", type=float, default=40.0,
                     help="PWM magnitude for --policy (default 40; 20 cannot steer)")
     ap.add_argument("--plan-dt", type=float, default=None,
-                    help="override the control period (live runner uses 0.25 s)")
+                    help="override the control period, VELOCITY policies only (a discrete "
+                         "policy runs each action for its own step_duration)")
     ap.add_argument("--scenario", default="dead_ahead")
     ap.add_argument("--goal-dist", type=float, default=1.0)
     ap.add_argument("--live-profile", action="store_true",

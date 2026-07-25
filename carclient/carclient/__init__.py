@@ -239,8 +239,10 @@ class CarClient(object):
     def obstacle_points(self, frame_id=None):
         """Base-frame points from /obstacle_points as ObsPoints(frame_id, pts, age).
 
-        These are the EXACT points the circles of that frame were clustered from,
-        so they pair with obstacles() by frame_id. `frame_id=None` returns the
+        These are the scan points the circles of that frame were computed from, so
+        they pair with obstacles() by frame_id. They are the INPUT to clustering:
+        a few percent are DBSCAN noise lying inside no circle, and the circles are
+        additionally EMA-smoothed. Same sample, not a per-point correspondence. `frame_id=None` returns the
         most recently ARRIVED frame (not the numerically largest id -- the car's
         counter restarts with car-ros); a specific id returns that frame or None.
         Unlike scan_points() this is synchronised with the circles -- see

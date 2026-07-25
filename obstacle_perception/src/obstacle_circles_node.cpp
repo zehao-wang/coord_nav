@@ -14,9 +14,12 @@
 //                     metres, base_footprint frame. x forward, y left. THIS is the
 //                     feed remote consumers read.
 //   /obstacle_points  std_msgs/Float32MultiArray, data = [frame_id, x0,y0, x1,y1, ...]
-//                     The EXACT base-frame point set this frame's circles were
-//                     clustered from, carrying the SAME frame_id, published in the
-//                     same process() call. A viewer can therefore draw points and
+//                     The range-filtered base-frame scan this frame's circles were
+//                     computed from, carrying the SAME frame_id, published in the
+//                     same process() call. It is the INPUT to clustering, so it also
+//                     contains points DBSCAN rejected as noise (a few %, inside no
+//                     circle), and the circles are additionally EMA-smoothed by
+//                     temporalFilter. Same sample, not a per-point correspondence. A viewer can therefore draw points and
 //                     circles that are genuinely the same sample -- subscribing to
 //                     /scan separately cannot: the node runs on its own rate_hz
 //                     timer off the latest scan (dropping ~60% of scans at 3 Hz vs

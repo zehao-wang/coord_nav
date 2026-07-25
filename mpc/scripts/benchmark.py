@@ -10,9 +10,11 @@
 Variant 2 (discrete grid-hop) is the default baseline the car is tested with;
 variant 1 (continuous v,omega sampling MPC) is the continuous comparison. Any
 policy registered in mpc_baseline/registry.py can join the table via --policy
-(repeatable). Note the built-ins run with the SIM profile while --policy entries
-run with the LIVE profile the registry builds -- pass --live-profile to compare
-like with like.
+(repeatable). NOTE the built-ins and --policy entries are NOT directly comparable:
+--variant uses the sim profile, and even with --live-profile it takes magnitude from
+LiveConfig.magnitude (20 -> v_max 0.10) while --policy builds through the registry at
+--magnitude (default 40 -> v_max 0.20), a 2.00x speed difference. Match them with
+--live-profile --magnitude 20.
 """
 
 import os
@@ -64,7 +66,8 @@ def main():
     ap.add_argument("--magnitude", type=float, default=40.0,
                     help="PWM magnitude for --policy entries (default 40)")
     ap.add_argument("--plan-dt", type=float, default=None,
-                    help="override the control period for every policy (live: 0.25 s)")
+                    help="override the control period, VELOCITY policies only (a discrete "
+                         "policy runs each action for its own step_duration)")
     ap.add_argument("--json", default=None)
     ap.add_argument("--plots", default=None)
     args = ap.parse_args()

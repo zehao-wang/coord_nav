@@ -58,14 +58,23 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
 
     `variant` is 1 or 2. Any key in POLICY_REGISTRY (including your own model) is
     forwarded to run_policy(); anything else raises instead of silently running
-    variant 2. `plan_dt` overrides the control period (see _default_plan_dt).
+    variant 2. `plan_dt` overrides the control period -- VELOCITY policies only;
+    a discrete policy runs each action for its own duration (see run_episode), so
+    plan_dt does nothing for it.
     """
-    v = str(variant).lower()
+    # Registry keys are matched FIRST and VERBATIM, because register()/build_policy()
+    # treat them verbatim. Lower-casing first (as this used to) meant a key that
+    # collided with a built-in alias -- "grid", "vw", "v1", "2", any casing -- ran
+    # the BUILT-IN instead, labelled with the caller's key: exactly the silent
+    # wrong-policy failure this function was rewritten to stop. Mixed-case keys were
+    # also unreachable by any spelling.
+    v_exact = str(variant)
+    if v_exact in POLICY_REGISTRY:
+        return run_policy(v_exact, scenarios=scenarios, goal_dist=goal_dist,
+                          obs_cfg=obs_cfg, seed=seed, sense_range=sense_range,
+                          plan_dt=plan_dt)
+    v = v_exact.lower()
     if v not in _V1 and v not in _V2:
-        if v in POLICY_REGISTRY:
-            return run_policy(v, scenarios=scenarios, goal_dist=goal_dist,
-                              obs_cfg=obs_cfg, seed=seed, sense_range=sense_range,
-                              plan_dt=plan_dt)
         _cfg_for(variant, live, goal_dist)        # raises with the full message
 
     scenarios = scenarios if scenarios is not None else default_scenarios(goal_dist)

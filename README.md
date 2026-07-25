@@ -121,7 +121,7 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 | 话题 | 类型 | 说明 |
 |---|---|---|
 | `/obstacles` | `std_msgs/Float32MultiArray` | **碰撞球**：`[frame_id, x,y,r, ...]`，米，base 系。远程主要读这个 |
-| `/obstacle_points` | `std_msgs/Float32MultiArray` | **这帧圆的来源点**：`[frame_id, x,y, x,y, ...]`，同 base 系、**同 frame_id**。可视化用它才能点云与圆同源（直接订 `/scan` 不同步，见下）。有订阅者才发 |
+| `/obstacle_points` | `std_msgs/Float32MultiArray` | **这帧圆的来源点**：`[frame_id, x,y, x,y, ...]`，同 base 系、**同 frame_id**。是聚类的输入（含 DBSCAN 噪声点，圆另经 EMA），保证同一采样而非逐点对应。可视化用它才能点云与圆同源（直接订 `/scan` 不同步，见下）。有订阅者才发 |
 | `/drive_action` | `std_msgs/Float32MultiArray` | **发离散动作**：`[action_id, magnitude, duration_s]` |
 | `/drive_result` | `std_msgs/String` | 每步完成回报（JSON）|
 | `/battery_v` | `std_msgs/Float32` | MCU 电压（链路健康信号；`/battery` 跨版本不兼容故转发）|

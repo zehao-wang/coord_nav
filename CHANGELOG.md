@@ -60,6 +60,43 @@ Variant 2 is unchanged at 0.833 / 0.000 / 0.000.
 
 **Not yet verified on the car** — it was powered down and charging when this landed.
 
+## 0.6.4 — 2026-07-25 — adversarial review of 0.6.2/aa04122: one real bug, four false doc claims
+
+A 14-agent adversarial review of the preceding commits. Everything below reproduced.
+
+- **BUG `eval.py`: `run_variant` lower-cased the key BEFORE testing the registry**,
+  while `register()`/`build_policy()` treat keys verbatim. So a registered key that
+  collided with a built-in alias — `grid`, `vw`, `v1`, `v2`, `1`, `2`, any casing —
+  **ran the built-in instead, labelled with the caller's key**, and any mixed-case
+  key was unreachable by every spelling (the error even printed `MyModel` inside the
+  list of keys it claimed were valid). That is precisely the silent wrong-policy
+  failure `aa04122` was written to eliminate, reintroduced one line above the fix.
+  Reproduced: a Spy policy registered as `grid` had `plan()` called 0 times and
+  `run_variant('grid')` was byte-identical to `run_variant(2)`. Registry keys are
+  now matched first and verbatim (Spy now gets 108 `plan()` calls under both `grid`
+  and `MyModel`).
+- **`config.build_live_cfg` still had the same fall-through**: `if v1: ... else: v2`,
+  so `"V1"`, `"velocity"` or any typo silently returned a discrete `Variant2Config`
+  with no `.v_max`/`.mppi` — and `mpc/README.md` tells model authors to call this
+  function by hand. `build_policy`'s action_space check cannot catch it (it compares
+  the registry entry against the POLICY, never against the cfg). Now explicit on both
+  sides with a raise, matching `policies.make_policy`.
+- **`--plan-dt` is a no-op for discrete policies** (`sim.py` uses `act.duration`), but
+  the CLI help said "every policy" and `mpc/README.md` offered it to custom-model
+  authors as the way to compare "按实车节奏". Verified: `run_variant(2, plan_dt=0.01)`
+  and `plan_dt=5.0` are identical; velocity does change. Help text corrected.
+- **"compare like with like" was false.** `--variant --live-profile` takes magnitude
+  from `LiveConfig.magnitude` (20 → v_max 0.10) while `--policy` builds through the
+  registry at `--magnitude` (default 40 → v_max 0.20) — exactly 2.00x. Documented,
+  with the flags that actually match them.
+- **"the EXACT points the circles were clustered from" overstated it** in 5 places.
+  `publishPoints(pts)` publishes the full range-filtered scan, but circles come from
+  `cluster_pts` (DBSCAN label >= 0) and are then EMA-smoothed by `temporalFilter`, so
+  a few percent of published points are noise lying inside no circle. Publishing
+  everything is right for a viewer; the wording was wrong, and it contradicted the
+  0.6.2 claim that "every point cluster sits inside its own circle" (corrected in
+  place). It is the same SAMPLE, not a per-point correspondence.
+
 ## 0.6.3 — 2026-07-25 — review of 0.6.2: frame-id reset bug, dead /scan subscription
 
 Self-review of the 0.6.2 change set found one real bug and one real redundancy.
@@ -132,7 +169,9 @@ Fix — publish the points the circles actually came from, tagged with the same 
 
 Verified on the car after `deploy_to_car.sh`: 12/12 consecutive `observation()`
 samples paired (frames 118–129, ~73 circles / ~645 points each), and an offscreen
-render shows every point cluster sitting inside its own circle.
+render shows the clusters sitting inside their circles. (Correction, 0.6.4: the
+published set is the INPUT to clustering, so a few percent are DBSCAN noise points
+that lie inside no circle — same sample, not a per-point correspondence.)
 
 ## 0.6.1 — 2026-07-25 — docs: install command was broken; stale/wrong doc claims fixed
 

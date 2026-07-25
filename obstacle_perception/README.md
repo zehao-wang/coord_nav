@@ -2,7 +2,8 @@
 
 `/scan` → DBSCAN 聚类 → 外接圆 → 去冗余 → **时域滤波** → **`/obstacles`**（`[frame_id, x,y,r, ...]`，米，base 系，默认 3Hz）。~3.4ms/帧。是所有 policy 的 observation 来源。
 
-同一次 `process()` 还发 **`/obstacle_points`**（`[frame_id, x,y, x,y, ...]`，同 base 系）——**这帧圆到底是从哪些点聚出来的**，带**同一个 frame_id**。可视化端据此把点云和圆当成同一个采样来画。
+同一次 `process()` 还发 **`/obstacle_points`**（`[frame_id, x,y, x,y, ...]`，同 base 系）——**这帧圆是从这批点算出来的**，带**同一个 frame_id**。可视化端据此把点云和圆当成同一个采样来画。
+注意这是聚类的**输入**：里面也包含 DBSCAN 判为噪声（不属于任何圆）的点（实测几个百分点），而且圆还额外过了 `temporalFilter` 的跨帧 EMA。保证的是**同一个采样**，不是逐点对应。
 直接订 `/scan` 做不到同步：节点是按 `rate_hz` 定时器取"最新一帧 scan"，3Hz 对雷达 ~7.7Hz 意味着**约 60% 的 scan 没参与生成圆**，客户端手上最新的 `/scan` 通常不是圆的来源（实测偏差 −0.04 ~ +0.22 s）。
 只在有订阅者时才发（实测 646 点/帧 ≈ 5.0 KB/帧 → 3Hz 下 15.1 KB/s）。参数：`publish_points`（默认 true）、`points_stride`（>1 抽稀）。
 

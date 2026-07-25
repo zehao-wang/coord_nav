@@ -222,17 +222,30 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
     """One live config for a variant, from the operator's magnitude + goal B.
     goal_dist/goal_y are B's forward/left coordinates relative to the start pose.
     Shared by run_live.py and the GUI so both build the policy identically."""
-    if str(variant) in ("1", "vw", "v1"):
+    # Explicit on BOTH sides + raise, like policies.make_policy. This used to be
+    # `if v1: ... else: v2`, so "V1"/"velocity"/a typo silently returned a discrete
+    # Variant2Config -- and the recipe in mpc/README.md tells model authors to call
+    # this by hand. A velocity policy handed a Variant2Config has no .v_max/.mppi,
+    # and build_policy's action_space check compares the entry against the POLICY,
+    # never against the cfg, so it does not catch it either.
+    v = str(variant).lower()
+    if v in ("1", "vw", "v1", "velocity"):
         c = live_config_v1()
         c.v_max = magnitude / c.robot.pwm_per_mps
         c.robot.wheel_pwm_cap = max(c.robot.wheel_pwm_cap, magnitude * 1.8)
         c.robot.deadzone_pwm = deadzone_pwm
-    else:
+    elif v in ("2", "grid", "v2", "discrete"):
         c = live_config_v2()
         c.step_magnitude = magnitude
         c.step_duration = step_duration
         if allow_rotation:
             c.actions = tuple(c.actions) + (9, 10)
+    else:
+        raise ValueError(
+            "build_live_cfg: unknown variant %r -- use 1/'vw'/'velocity' for the "
+            "continuous (v,w) config or 2/'grid'/'discrete' for the mecanum-action "
+            "config. (This used to fall through to variant 2, handing a velocity "
+            "policy a Variant2Config with no .v_max/.mppi.)" % (variant,))
     c.goal.goal_dist = goal_dist
     c.goal.goal_y = goal_y
     c.goal.goal_tol = goal_tol
