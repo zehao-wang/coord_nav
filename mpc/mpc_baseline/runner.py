@@ -101,6 +101,9 @@ class PolicyRunner(object):
         self._abort = False
         self._dr = np.zeros(3)                # dead-reckoned pose [x, y, yaw]
         self._t = {}                          # per-tick timing/continuity, for the tick log
+        self._prev_pose = None                # for measured-vs-commanded divergence
+        self._cmd_body = None
+        self._cum = [0.0, 0.0, 0.0, 0.0]      # cum measured xy, cmd xy, |dyaw|, |cmd yaw|
         self._last_summary = None             # filled by _summary(), used by the tick-log footer
         self._end_note = ""
         self.tick_log_path = None
@@ -209,12 +212,12 @@ class PolicyRunner(object):
             "pose_source": self.pose_source,
             "collision_abort": "%s (estop=%s, margin %.2f)" % (
                 self.live.collision_abort, self.collision_estop, self.live.collision_margin),
-            "robot": "radius %.2f m, pwm_per_mps %.0f, wz_arm %.2f, deadzone %.0f" % (
-                self.cfg.robot.robot_radius, self.cfg.robot.pwm_per_mps,
-                self.cfg.robot.wz_arm, self.cfg.robot.deadzone_pwm),
+            "robot": "radius %.2f m; plant m/s=(PWM-%.0f)/%.1f; wz_arm %.3f m" % (
+                self.cfg.robot.robot_radius, self.cfg.robot.pwm_offset,
+                self.cfg.robot.pwm_per_mps, self.cfg.robot.wz_arm),
             "limits": self._limits_str(),
-            "CAVEAT": ("model vs plant is NOT calibrated: measured ~1.58x on speed and "
-                       "~3.6x on turn radius, so PLAN and the car's actual motion diverge"),
+            "plant": ("CALIBRATED 2026-07-25 by smoke/calib_model.py at 9.8 V. Re-run the "
+                      "linear test on a charged pack -- pwm_per_mps moves with voltage."),
         })
         self.tick_log_path = getattr(tlog, "path", None)
         if self.action_space == "velocity":
@@ -236,14 +239,19 @@ class PolicyRunner(object):
                 frame = self.client.wait_frame(after=last_fid,
                                                timeout=tick.wait_ticks * period)
                 t_tick = time.monotonic()
+                n_tick += 1
                 if frame is None:      # no new perception frame in time
                     self.log("no new observation frame -- holding")
-                    tlog.note("HOLD  no new observation frame within %.2fs -- car stopped"
-                              % (tick.wait_ticks * period))
                     self._hold()
                     plan, pending, idx = None, None, 0
+                    # A tick that did nothing is still a tick: emit a line so the file
+                    # has NO gaps. Silence in the log must mean "the loop stopped",
+                    # never "the loop ran but took a branch that forgot to log".
+                    tlog.tick({"tick": n_tick, "t_s": t_tick - t0, "ev": "NOFRAME",
+                               "timing": {"wait_ms": 1e3 * (t_tick - t_wait0)},
+                               "flags": ["NOFRAME"]})
+                    t_tick_prev = t_tick
                     continue
-                n_tick += 1
                 # Timing breakdown of the tick, so a log can show where the period
                 # went and whether the loop overran (planning + grace > period, which
                 # makes the NEXT wait_frame return instantly on an already-queued
@@ -259,13 +267,30 @@ class PolicyRunner(object):
                 last_fid = frame.frame_id
                 obs = frame
 
+                def _stub(ev, pose=None, **kw):
+                    r = {"tick": n_tick, "t_s": t_tick - t0, "dt_s": self._t["period_s"],
+                         "pose": (None if pose is None
+                                  else list(self._pose_rel(pose, start))),
+                         "frame_id": obs.frame_id, "skipped": self._t["skipped"],
+                         "n_obs": len(obs.circles), "ev": ev, "flags": [ev],
+                         "nearest": (None if not obs.circles
+                                     else float(_nearest_base_edge(obs.circles))),
+                         "points_paired": obs.points is not None,
+                         "obs_age_s": obs.age,
+                         "timing": {"wait_ms": 1e3 * self._t["wait_s"]}}
+                    r.update(kw)
+                    tlog.tick(r)
+
                 if self._abort:
                     reason = "aborted"
+                    _stub("ABORT")
                     break
                 if time.monotonic() - t0 > t_end:
                     reason = "timeout"
+                    _stub("TIMEOUT")
                     break
                 if self._link_bad():
+                    _stub("LINKLOST")
                     self.client.estop()
                     return self._summary("link_lost_estop", False, goal, t0)
 
@@ -273,15 +298,15 @@ class PolicyRunner(object):
                 if (pose is None or obs.age > self.obs_cfg.max_age_stale or
                         (page is not None and page > self.obs_cfg.max_age_stale)):
                     self.log("stale obstacles/pose -- holding")
-                    tlog.note("HOLD  stale data (obs age %.2fs, pose age %s) -- car stopped"
-                              % (obs.age, "-" if page is None else "%.2fs" % page))
                     self._hold()
                     plan, pending, idx = None, None, 0   # re-plan fresh once data returns
+                    _stub("STALE", pose=pose, pose_age_s=page)
                     continue
 
                 # Safety runs on the FRESH frame, before anything decided a tick ago
                 # is allowed to reach the wheels.
                 if self._imminent_collision(obs.circles):
+                    _stub("COLLIDE", pose=pose, pose_age_s=page)
                     tlog.note("SAFETY  imminent collision: nearest edge %.2fm < radius %.2f + margin %.2f"
                               % (_nearest_base_edge(obs.circles),
                                  self.cfg.robot.robot_radius, self.live.collision_margin))
@@ -294,26 +319,29 @@ class PolicyRunner(object):
                 gd = float(np.hypot(goal[0] - pose[0], goal[1] - pose[1]))
                 if gd <= self.cfg.goal.goal_tol:
                     reached, reason = True, "reached"
+                    _stub("REACHED", pose=pose, gd=gd, pose_age_s=page,
+                          dmem=float(self.field.raw_min_distance(pose[:2])))
                     break
 
                 # ---- DISPATCH what last tick decided (overrides the car's current
                 # command). Nothing pending -> send nothing: the car keeps running
                 # its last command, and holds once that command expires.
-                dispatched = None
+                dispatched, src_fid = None, None
                 if pending is not None:
-                    ctl, act = pending
+                    ctl, act, src_fid = pending
                     pending = None
                     dispatched = _act_rec(act, ctl)
                     if act.space == "velocity":
                         v, w = ctl
                         self.act.set_velocity(v, 0.0, w)
+                        self._cmd_body = (v, 0.0, w)
                         self._advance_dr((v, 0.0, w), period)
                         self._emit_step(pose, goal, gd, obs, v=v, w=w, traj=act.traj)
                     else:
                         aid, mag, dur = ctl
                         self.act.step(aid, mag, dur)          # non-blocking
-                        self._advance_dr(action_body_velocity(aid, mag, self.cfg.robot),
-                                         period)
+                        self._cmd_body = tuple(action_body_velocity(aid, mag, self.cfg.robot))
+                        self._advance_dr(self._cmd_body, period)
                         self._emit_step(pose, goal, gd, obs, action=aid, traj=act.traj)
 
                 # ---- PLAN this tick's observation -> the action for the NEXT tick.
@@ -324,7 +352,7 @@ class PolicyRunner(object):
                     act = self.policy.plan(Observation(pose, goal, obs.circles, self.field))
                     plan, idx = (self._controls_of(act), act), 0
                 controls, act = plan
-                pending = (controls[idx], act)
+                pending = (controls[idx], act, obs.frame_id)
                 idx += 1
                 self._t["plan_s"] = time.monotonic() - t_plan0
                 self._t["replanned"] = replanned
@@ -337,16 +365,28 @@ class PolicyRunner(object):
                     "dt_s": self._t["period_s"],
                     "frame_id": obs.frame_id,
                     "skipped": self._t["skipped"],
-                    "pose": [float(pose[0]), float(pose[1]),
-                             float(np.degrees(pose[2]))],
+                    # Pose in the RUN-START body frame, not raw odom: odom is whatever
+                    # the car happened to accumulate, so a run starting at (1.96,-0.94)
+                    # reads as if it began 2 m off course.
+                    "pose": list(self._pose_rel(pose, start)),
                     "gd": gd,
                     "n_obs": len(obs.circles),
+                    # dnear is what the COLLISION GUARD sees (this frame's circles only,
+                    # runner._imminent_collision); dmem is what the POLICY plans against
+                    # (the odom-frame rolling memory). dnear=inf while dmem is small
+                    # means the obstacle is remembered but absent from this frame, so
+                    # the guard physically cannot fire -- that one comparison separates
+                    # "perception lost it" from "the guard had nothing to fire on".
                     "nearest": (None if not obs.circles
                                 else float(_nearest_base_edge(obs.circles))),
+                    "n_mem": len(self.field.circles()),
+                    "dmem": float(self.field.raw_min_distance(pose[:2])),
                     "points_paired": obs.points is not None,
                     "obs_age_s": obs.age,
                     "pose_age_s": page,
                     "dispatch": dispatched,
+                    "src_fid": src_fid,          # which frame this command was planned from
+                    "moved": self._moved(pose, period),
                     "plan": _act_rec(act, controls[idx - 1]),
                     "timing": {"wait_ms": 1e3 * self._t["wait_s"],
                                "plan_ms": 1e3 * self._t["plan_s"],
@@ -394,6 +434,34 @@ class PolicyRunner(object):
                           "action": action, "v": v, "w": w,
                           "n_obs": len(obs.circles), "policy": self.label,
                           "traj": traj.tolist() if traj is not None else None})
+
+    @staticmethod
+    def _pose_rel(pose, start):
+        """Pose in the RUN-START body frame: (fwd, left, yaw_deg)."""
+        c, s = np.cos(-start[2]), np.sin(-start[2])
+        dx, dy = pose[0] - start[0], pose[1] - start[1]
+        dth = np.arctan2(np.sin(pose[2] - start[2]), np.cos(pose[2] - start[2]))
+        return (float(c * dx - s * dy), float(s * dx + c * dy), float(np.degrees(dth)))
+
+    def _moved(self, pose, dt):
+        """Measured vs COMMANDED motion since the previous tick -- the model-vs-plant
+        divergence, live and per tick. Meaningless under pose_source='dead_reckon',
+        where the pose IS the integrated command, so it is reported as None there."""
+        prev, cmd = self._prev_pose, self._cmd_body
+        self._prev_pose = np.array(pose, dtype=float)
+        if prev is None or cmd is None or self.pose_source == "dead_reckon":
+            return None
+        dxy = float(np.hypot(pose[0] - prev[0], pose[1] - prev[1]))
+        dyaw = float(np.arctan2(np.sin(pose[2] - prev[2]), np.cos(pose[2] - prev[2])))
+        cxy = float(np.hypot(cmd[0], cmd[1]) * dt)
+        cyaw = float(cmd[2] * dt)
+        self._cum[0] += dxy; self._cum[1] += cxy
+        self._cum[2] += abs(dyaw); self._cum[3] += abs(cyaw)
+        return {"dxy": dxy, "cmd_xy": cxy, "dyaw": dyaw, "cmd_yaw": cyaw,
+                "r_xy": (dxy / cxy) if cxy > 1e-6 else None,
+                "r_yaw": (dyaw / cyaw) if abs(cyaw) > 1e-4 else None,
+                "cum_r_xy": (self._cum[0] / self._cum[1]) if self._cum[1] > 1e-6 else None,
+                "cum_r_yaw": (self._cum[2] / self._cum[3]) if self._cum[3] > 1e-4 else None}
 
     def _limits_str(self):
         """The command box, so a reader can tell a pinned command from a free one."""

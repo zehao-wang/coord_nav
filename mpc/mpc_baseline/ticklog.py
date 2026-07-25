@@ -33,8 +33,9 @@ from datetime import datetime
 DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "..", "..", "output")
 
-HEADER_COLS = ("tick   t      dt     frame     pose(x     y     yaw)   gd     "
-               "obs        DISPATCH             PLAN->next           timing        FLAGS")
+HEADER_COLS = ("tick   t      dt     frame     pose(fwd   left  yaw)   gd     "
+               "obs/mem      DISPATCH             PLAN->next           real/cmd     "
+               "timing        FLAGS")
 
 
 class TickLog(object):
@@ -77,7 +78,14 @@ class TickLog(object):
         w("#\n")
         w("# units: metres, degrees for yaw (x fwd, y left, CCW+), m/s, rad/s, PWM\n")
         w("# t/dt seconds since run start / since previous tick.  gd = distance to B.\n")
-        w("# obs = 'N nD' : N circles this frame, nearest obstacle EDGE at D m.\n")
+        w("# obs/mem 'N nD mM': N circles THIS FRAME, nearest edge D m -- what the\n")
+        w("#            COLLISION GUARD sees, since it reads this frame only -- and M m\n")
+        w("#            to the nearest REMEMBERED obstacle, which is what the POLICY\n")
+        w("#            plans against. D=-- with a small M means the guard cannot fire\n")
+        w("#            on an obstacle the policy can see.\n")
+        w("# real/cmd 'xA wB': measured / commanded motion this tick; 1.00 = the model\n")
+        w("#            matches the car. Blank under pose_source=dead_reckon, where the\n")
+        w("#            pose IS the integrated command and the ratio is a tautology.\n")
         w("# DISPATCH = what was SENT this tick (decided one tick earlier, and it\n")
         w("#            supersedes whatever the car was still running).\n")
         w("# PLAN->next = what this tick's observation produced, to be sent NEXT tick.\n")
@@ -95,6 +103,11 @@ class TickLog(object):
         w("#   AWAY    distance to B grew vs the previous tick\n")
         w("#   NEAR    an obstacle edge is within one robot radius of the footprint\n")
         w("#   SAFETY  a safety interlock fired (see the line text)\n")
+        w("#   NOFRAME no observation frame arrived in time (the car was stopped)\n")
+        w("#   STALE / COLLIDE / LINKLOST / ABORT / TIMEOUT / REACHED: the tick took that\n")
+        w("#            branch and ended there. EVERY tick emits exactly one line, so a\n")
+        w("#            gap in the numbering means the loop stopped -- never that a\n")
+        w("#            branch forgot to log.\n")
         w("#\n")
         w(HEADER_COLS + "\n")
         self.fh.flush()
@@ -149,6 +162,18 @@ class TickLog(object):
             pass                       # never let logging kill the control loop
 
     @staticmethod
+    def _drift(m):
+        """Measured/commanded motion this tick. 1.00 means the model matches the
+        car; the calibration run measured 1.55x on speed and 0.80x on yaw before
+        the plant constants were fixed, which is exactly the kind of drift that
+        makes a planner ask for turns the car cannot make."""
+        if not m:
+            return "%-12s" % "--"
+        rx = ("%.2f" % m["r_xy"]) if m.get("r_xy") else "-"
+        rw = ("%.2f" % m["r_yaw"]) if m.get("r_yaw") else "-"
+        return "%-12s" % ("x%s w%s" % (rx, rw))
+
+    @staticmethod
     def _act(a):
         """One action rendered the same way whichever action space it came from."""
         if a is None:
@@ -164,17 +189,19 @@ class TickLog(object):
             return dash if x is None else spec % x
         pose = r.get("pose") or [None, None, None]
         t = r.get("timing") or {}
-        return ("%-6s %-6s %-6s %-9s %-6s %-6s %-6s %-6s %-10s %s %s %-13s %s" % (
+        return ("%-6s %-6s %-6s %-9s %-6s %-6s %-6s %-6s %-12s %s %s %-12s %-13s %s" % (
             "%04d" % r.get("tick", 0),
             f(r.get("t_s"), "%.2f"),
             f(r.get("dt_s"), "%.3f"),
             f(r.get("frame_id"), "%d"),
             f(pose[0], "%+.2f"), f(pose[1], "%+.2f"), f(pose[2], "%+.1f"),
             f(r.get("gd"), "%.3f"),
-            "%s n%s" % (r.get("n_obs", "-"),
-                        f(r.get("nearest"), "%.2f", "--")),
+            "%s n%s m%s" % (r.get("n_obs", "-"),
+                            f(r.get("nearest"), "%.2f", "--"),
+                            f(r.get("dmem"), "%.2f", "--")),
             self._act(r.get("dispatch")),
             self._act(r.get("plan")),
+            self._drift(r.get("moved")),
             "w%-3s p%-3s W%-3s" % (f(t.get("wait_ms"), "%.0f", "-"),
                                    f(t.get("plan_ms"), "%.0f", "-"),
                                    f(t.get("work_ms"), "%.0f", "-")),

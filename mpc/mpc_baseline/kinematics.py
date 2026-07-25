@@ -58,14 +58,46 @@ def wheels_to_body(wheels, arm):
     return vx, vy, wz
 
 
+def pwm_of_mps(mps, robot):
+    """Wheel speed (m/s) -> PWM, the AFFINE plant inverse.
+
+        pwm = v * pwm_per_mps + pwm_offset * sign(v)
+
+    The motors do not start until PWM passes a friction threshold, so the plant is
+    affine, not proportional: measured on the car, v = (PWM - 17.0) / 73.4 with
+    residuals of +-0.003 m/s over PWM 30/40/60 (see smoke/calib_model.py). Adding
+    the offset back is the exact inverse, so the realised wheel speed equals the
+    commanded one.
+
+    This replaced a per-wheel clamp that bumped any small command UP to a fixed
+    deadzone value. That destroyed steering: it moved each wheel by a DIFFERENT
+    amount, so the left/right difference -- which is the entire steering signal --
+    was flattened. At magnitude 20 a commanded |w| <= 0.45 rad/s came out as
+    literally 0 rad/s, because all four wheels were clamped to the same 30 PWM.
+    Adding one constant to every wheel leaves the differences untouched.
+    """
+    mps = np.asarray(mps, dtype=float)
+    pwm = mps * robot.pwm_per_mps
+    off = getattr(robot, "pwm_offset", 0.0)
+    if off > 0.0:
+        moving = np.abs(mps) > 1e-9
+        pwm = np.where(moving, pwm + np.sign(mps) * off, pwm)
+    return pwm
+
+
+def mps_of_pwm(pwm, robot):
+    """PWM -> wheel speed (m/s). Inverse of pwm_of_mps; below the friction offset
+    the wheel does not turn at all."""
+    pwm = np.asarray(pwm, dtype=float)
+    off = getattr(robot, "pwm_offset", 0.0)
+    mag = np.maximum(np.abs(pwm) - off, 0.0)
+    return np.sign(pwm) * mag / robot.pwm_per_mps
+
+
 def velocity_to_wheel_pwm(vx, vy, wz, robot):
     """Body velocity (m/s, rad/s) -> clipped wheel PWM [FL, RL, FR, RR] ready for
-    /wheel_cmd. Applies the optional deadzone bump so a small-but-nonzero command
-    actually moves the motors (car deadzone is ~PWM 30)."""
-    pwm = mix_to_wheels(vx, vy, wz, robot.wz_arm) * robot.pwm_per_mps
-    if robot.deadzone_pwm > 0.0:
-        small = (np.abs(pwm) > 1e-6) & (np.abs(pwm) < robot.deadzone_pwm)
-        pwm[small] = np.sign(pwm[small]) * robot.deadzone_pwm
+    /wheel_cmd, through the affine plant inverse (see pwm_of_mps)."""
+    pwm = pwm_of_mps(mix_to_wheels(vx, vy, wz, robot.wz_arm), robot)
     return np.clip(pwm, -robot.wheel_pwm_cap, robot.wheel_pwm_cap)
 
 
@@ -85,7 +117,9 @@ def action_body_velocity(action_id, magnitude, robot):
     inverted through the mecanum mix)."""
     eff = action_effective_magnitude(action_id, magnitude, robot)
     wheels_pwm = np.array(ACTION_PATTERNS[action_id], dtype=float) * eff
-    wheels_mps = wheels_pwm / robot.pwm_per_mps
+    # PWM -> m/s through the affine plant: a hop at PWM P moves at (P - offset)/k,
+    # not P/k. Using the proportional form over-estimated the hop by ~55% at PWM 40.
+    wheels_mps = mps_of_pwm(wheels_pwm, robot)
     return wheels_to_body(wheels_mps, robot.wz_arm)
 
 

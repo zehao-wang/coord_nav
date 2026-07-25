@@ -3,6 +3,73 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.0 - 2026-07-25 - plant model CALIBRATED; tick log completed
+
+### The plant is affine, not proportional
+
+`smoke/calib_model.py` (new) measures commanded -> actual on the car. Three PWM
+levels per axis, /odom as reference (encoder xy, gyro yaw):
+
+    LINEAR  v = (PWM - 17.0) / 73.4        residuals +-0.003 m/s over PWM 30/40/60
+    YAW     offset from the yaw axis independently = 18.4 PWM  (linear axis: 17.0)
+
+The motors do not turn until PWM clears a friction threshold. With the offset
+accounted for the yaw arm becomes a constant **0.194 m** (0.199 / 0.195 / 0.186);
+under the old proportional model it "drifted" 0.168 -> 0.125 -> 0.095 with PWM.
+**A friction offset was masquerading as wrong geometry.** If your measured arm
+changes with PWM, you are missing an offset, not a length.
+
+Model error at the magnitude the car is driven (PWM 40): speed **1.55x** too slow
+in the model, yaw **0.80x** too fast -> real turn radius ~1.9x the planned one.
+That is what made variant 1 command max yaw tick after tick and spiral.
+
+- `RobotConfig`: `pwm_per_mps` 200 -> **73.4**, new **`pwm_offset` 17.0**,
+  `wz_arm` 0.5 -> **0.194**. `Variant1Config.steer_arm` 0.10 -> **0.194**.
+  `v_max` is now the affine inverse of the magnitude, not `magnitude/pwm_per_mps`.
+- **`deadzone_pwm` is gone.** It clamped each wheel UP to a fixed value
+  independently, which flattened the left/right difference -- and that difference
+  IS the steering signal. Replaced by the affine inverse
+  `PWM = v*k + offset*sign(v)`, one constant added to every wheel, so the
+  differences survive. Commanded -> realised yaw went from 0%/0%/13%/17% at
+  magnitude 20 and 100%/100%/87%/78% at 40, to **100% at both**.
+- Offline over 20 seeds x 6 scenarios: variant 2 **0.833 -> 1.000** (its hop
+  distance had been over-estimated ~55%). Variant 1 0.750 -> 0.592 on the built-in
+  TIGHT suite -- not a regression: restoring the fictitious 0.10 arm reproduces the
+  old 0.750, i.e. the sim had been granting turns the car cannot make. In the
+  regime the car is actually driven (B=3 m, obstacles 1.2-1.5 m) the calibrated
+  model is **1.000 success / 0 collisions**, identical to before.
+- CAVEAT: measured at **9.8 V** (healthy is 11-13 V). `pwm_per_mps` moves with
+  voltage -- re-run `--test linear` on a charged pack. `pwm_offset` (a threshold)
+  and `wz_arm` (a ratio) are far less sensitive.
+- Measurement trap found the hard way: **yaw must be integrated during the run**,
+  not differenced end-to-end. /odom yaw wraps to (-pi, pi], so the first PWM-60 run
+  turned a full revolution and read -3.4 deg, putting the arm at -7.165 m.
+- Procedure documented in `mpc/README.md`.
+
+### Tick log completed
+
+A design pass over the log (four debugging personas) found the biggest hole:
+**`tlog.tick()` was only reached at the end of the loop**, so every `continue` /
+`return` / `break` path -- no frame, stale data, link loss, collision, abort,
+timeout, goal reached -- produced NO line. Each failure tick was a gap, and a
+reader seeing 0.67 s of silence would conclude the loop hung when it had actually
+run, stopped the car and cleared its buffer. Now **every tick emits exactly one
+line**, tagged `NOFRAME` / `STALE` / `COLLIDE` / `LINKLOST` / `ABORT` / `TIMEOUT` /
+`REACHED`, so a gap in the numbering can only mean the loop stopped.
+
+Also added, all from the same pass:
+- **pose in the RUN-START body frame**, not raw odom. A run starting at odom
+  (1.96, -0.94) used to print as if it began 2 m off course.
+- **`obs/mem` shows two clearances**: what the collision guard sees (this frame's
+  circles only) and what the policy plans against (the odom rolling memory).
+  `n--` with a small `m` means the guard cannot fire on an obstacle the policy can
+  see -- it separates "perception lost it" from "the guard had nothing to act on".
+- **`real/cmd`**: measured / commanded motion per tick, the model-vs-plant
+  divergence live. Suppressed under `pose_source=dead_reckon`, where the pose IS
+  the integrated command and the ratio would be a tautology.
+- `src_fid`: which observation frame each dispatched command was planned from, so
+  the one-tick buffering is verifiable rather than assumed.
+
 ## 0.8.0 — 2026-07-25 — dedicated per-tick debug log
 
 One file per experiment, named by the experiment start time, so someone who did NOT

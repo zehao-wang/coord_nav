@@ -23,15 +23,26 @@ from typing import Tuple
 class RobotConfig:
     """Chassis geometry and the PWM<->velocity mapping.
 
-    pwm_per_mps and wz_arm mirror car_base_node.py so the model matches what the
-    real chassis does. They are only nominal; the closed-loop replanning absorbs
-    scale error (calibrate with scripts/calibrate_goal.py if you want B exact).
+    MEASURED on the car with smoke/calib_model.py (2026-07-25), not guessed. The
+    plant is AFFINE, not proportional -- the motors do not turn until PWM clears a
+    friction threshold:
+
+        wheel m/s = (PWM - pwm_offset) / pwm_per_mps
+
+    Fitted over PWM 30/40/60: pwm_per_mps 73.4, pwm_offset 17.0, residuals
+    +-0.003 m/s. The same offset falls out of the yaw axis independently (18.4),
+    and once it is accounted for the yaw arm becomes a constant 0.194 m instead of
+    drifting 0.168 -> 0.095 with PWM. See mpc/README.md for the procedure.
+
+    CAVEAT: pwm_per_mps was measured at 9.8 V (a healthy pack is 11-13 V) and motor
+    speed at a given PWM falls with voltage, so re-run the linear test on a charged
+    pack. pwm_offset (a threshold) and wz_arm (a ratio) are far less sensitive.
     """
     robot_radius: float = 0.13        # half-footprint of the mecanum car (m)
-    pwm_per_mps: float = 200.0        # car_base PWM = m/s * this (mag 40 -> 0.2 m/s)
-    wz_arm: float = 0.5               # yaw mixing arm (m/rad), matches car_base WZ_ARM
+    pwm_per_mps: float = 73.4         # MEASURED slope (was a nominal 200)
+    pwm_offset: float = 17.0          # MEASURED friction threshold, PWM
+    wz_arm: float = 0.194             # MEASURED yaw arm (m); was a nominal 0.5
     wheel_pwm_cap: float = 80.0       # clamp on any wheel PWM (car caps at 100)
-    deadzone_pwm: float = 0.0         # if >0: bump a nonzero wheel cmd up to this
     diag_mult: float = 1.6            # diagonal magnitude boost (matches carclient)
     strafe_mult: float = 1.2          # strafe magnitude boost (matches carclient)
 
@@ -95,14 +106,19 @@ class GoalConfig:
 @dataclass
 class Variant1Config:
     v_min: float = 0.0                # m/s -- no reverse/stop: keep moving to B
-    v_max: float = 0.22               # m/s forward cap (nominal); live lowers this
-    w_max: float = 1.2                # yaw-rate cap => min turn radius v/w_max ~0.17 m. Only a
+    v_max: float = 0.22               # m/s forward cap for OFFLINE work; the live factories
+                                      # derive it from the magnitude via the affine plant
+                                      # ((PWM-offset)/k), e.g. mag 40 -> 0.313 m/s
+    w_max: float = 1.2                # yaw-rate cap => min turn radius v/w_max ~0.26 m at mag 40.
+                                      # Only a
                                       # CAP; the cost keeps turns gentle unless an obstacle needs
                                       # the sharper turn. Inner wheel still rolls forward at it.
     # Differential drive: all wheels forward, steer by L/R speed difference; the constraint
     # keeps the inner wheel >= min_inner_frac * v so it never pivots (smoothness is w_smooth).
-    steer_arm: float = 0.1            # PHYSICAL half-track (m), CALIBRATED so commanded w ==
-                                      # actual yaw rate; also the inner-wheel-constraint arm
+    steer_arm: float = 0.194          # MEASURED yaw arm (m) so commanded w == actual yaw
+                                      # rate; also the inner-wheel-constraint arm. The old
+                                      # 0.10 let the planner ask for turns twice as tight as
+                                      # the car can do, which is why it spiralled.
     min_inner_frac: float = 0.1       # inner wheel speed >= this fraction of v (keeps it rolling)
     robot: RobotConfig = field(default_factory=RobotConfig)
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
@@ -187,6 +203,11 @@ class LiveConfig:
     # soft stop would latch the wheels).
 
 
+def _v_of_pwm(pwm, robot):
+    """Speed ceiling for a PWM ceiling, through the affine plant."""
+    return max(0.0, (pwm - robot.pwm_offset) / robot.pwm_per_mps)
+
+
 def sim_config_v1() -> Variant1Config:
     c = Variant1Config()
     c.robot.wz_arm = c.steer_arm      # actuation mix arm == steer constraint arm
@@ -201,11 +222,10 @@ def live_config_v1() -> Variant1Config:
     """Slow, conservative variant-1 profile for the real car (magnitude ~20)."""
     c = Variant1Config()
     # magnitude 20 -> PWM 20 -> ~0.10 m/s ceiling; keep yaw gentle too.
-    c.v_max = LiveConfig.magnitude / c.robot.pwm_per_mps   # 0.10 m/s
+    c.v_max = _v_of_pwm(LiveConfig.magnitude, c.robot)
     c.v_min = 0.0
     c.robot.wz_arm = c.steer_arm      # actuation mix arm == steer constraint arm
-    c.robot.deadzone_pwm = 30.0       # keep the inner wheel actually spinning in a turn
-    c.robot.wheel_pwm_cap = 35.0      # hard ceiling on any wheel PWM live
+    c.robot.wheel_pwm_cap = 60.0      # hard ceiling on any wheel PWM live
     return c
 
 
@@ -217,7 +237,7 @@ def live_config_v2() -> Variant2Config:
 
 
 def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
-                   timeout_s=25.0, step_duration=0.5, deadzone_pwm=30.0,
+                   timeout_s=25.0, step_duration=0.5, pwm_offset=None,
                    allow_rotation=False):
     """One live config for a variant, from the operator's magnitude + goal B.
     goal_dist/goal_y are B's forward/left coordinates relative to the start pose.
@@ -231,9 +251,13 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
     v = str(variant).lower()
     if v in ("1", "vw", "v1", "velocity"):
         c = live_config_v1()
-        c.v_max = magnitude / c.robot.pwm_per_mps
+        if pwm_offset is not None:
+            c.robot.pwm_offset = pwm_offset
+        # magnitude is the PWM ceiling, so the speed ceiling is the affine inverse
+        # of it -- NOT magnitude/pwm_per_mps, which ignores the friction offset and
+        # over-states v_max by pwm_offset/pwm_per_mps (0.23 m/s at these constants).
+        c.v_max = _v_of_pwm(magnitude, c.robot)
         c.robot.wheel_pwm_cap = max(c.robot.wheel_pwm_cap, magnitude * 1.8)
-        c.robot.deadzone_pwm = deadzone_pwm
     elif v in ("2", "grid", "v2", "discrete"):
         c = live_config_v2()
         c.step_magnitude = magnitude

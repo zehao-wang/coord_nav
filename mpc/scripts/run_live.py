@@ -28,9 +28,10 @@ from mpc_baseline.runner import MPCRunner
 def build_cfg(args):
     if args.variant == 1:
         cfg = C.live_config_v1()
-        cfg.v_max = args.magnitude / cfg.robot.pwm_per_mps
+        cfg.v_max = C._v_of_pwm(args.magnitude, cfg.robot)
         cfg.robot.wheel_pwm_cap = max(cfg.robot.wheel_pwm_cap, args.magnitude * 1.8)
-        cfg.robot.deadzone_pwm = args.deadzone_pwm
+        if args.pwm_offset is not None:
+            cfg.robot.pwm_offset = args.pwm_offset
     else:
         cfg = C.live_config_v2()
         cfg.step_magnitude = args.magnitude
@@ -54,8 +55,8 @@ def main():
                     help="drive magnitude (PWM). START SMALL (default 20)")
     ap.add_argument("--step-duration", type=float, default=0.5,
                     help="variant 2 seconds per hop")
-    ap.add_argument("--deadzone-pwm", type=float, default=0.0,
-                    help="variant 1: bump nonzero wheel PWM up to this (motor deadzone ~30)")
+    ap.add_argument("--pwm-offset", type=float, default=None,
+                    help="override the measured friction offset (PWM) added to every wheel")
     ap.add_argument("--tick-hz", type=float, default=C.TickConfig.rate_hz,
                     help="GLOBAL tick rate; must equal the car's perception rate")
     ap.add_argument("--timeout", type=float, default=25.0, help="episode timeout (s)")

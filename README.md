@@ -102,7 +102,9 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 | 4 | 左后 ↙ | 10 | 原地右转 ↻ |
 | 5 | 后退 ↓ | | |
 
-`magnitude` 是轮速幅值（PWM 档，~<30 死区、50+ 稳转）；`duration_s` 是这一步持续时间（开环定时脉冲，非闭环到点）。
+`magnitude` 是轮速幅值（PWM 档）；`duration_s` 是这一步持续时间（开环定时脉冲，非闭环到点）。
+> **实测(2026-07-25, 9.8V)**：电机静摩擦阈值 **~17 PWM**，之上线性 `轮速 = (PWM−17)/73.4` m/s。
+> 所以 mag 20 只比阈值高 3，车几乎不动；mag 40 ≈ 0.31 m/s。标定方法见 `smoke/calib_model.py`。
 
 ### 更高层：A→B 绕障 Policy 框架（写自己的模型看这里）
 
@@ -178,7 +180,7 @@ MCU 固件对 `set_motor` **无超时**，串口不稳时"停止"命令可能丢
 | `gui/car_console.py` `gui/run_gui.sh` | PySide6 上位机 |
 | `obstacle_perception/` | C++ 障碍感知 ROS 包（部署到 Nano `~/catkin_ws/src/`）|
 | `car_ros/car_base_node.py` `car_ros/drive_action_node.py` `car_ros/viz.launch` | 车端在用的源码副本（部署到 `car_base/`）|
-| `smoke/` | 连通性/单轮测试（`smoke_test.sh`、`wheel_test.*`、`wheel_diag.py`）+ 实车实验 `policy_run.py`、`calib_gyro.py` |
+| `smoke/` | 连通性/单轮测试（`smoke_test.sh`、`wheel_test.*`、`wheel_diag.py`）+ 实车实验 `policy_run.py`、`calib_gyro.py`（yaw 来源核对）、**`calib_model.py`（标定被控对象模型,见 [`mpc/README.md`](mpc/README.md)）** |
 | `output/` | GUI 每次 Execute 的录制（gitignored）|
 
 > `rplidar_watchdog.py` **只在车上**（`car_base/scripts/` + `rplidar-watchdog.service`），源码未纳入本仓库。
