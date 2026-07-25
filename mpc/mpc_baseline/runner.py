@@ -327,6 +327,12 @@ class PolicyRunner(object):
                 # ---- DISPATCH what last tick decided (overrides the car's current
                 # command). Nothing pending -> send nothing: the car keeps running
                 # its last command, and holds once that command expires.
+                # Measure BEFORE dispatching: the pose delta since the last tick was
+                # produced by the command dispatched LAST tick, which is still in
+                # self._cmd_body. Measuring after the dispatch compared this tick's
+                # pose delta with next tick's command -- off by one, and it read a
+                # steady 0.81 on runs whose steady-state tracking is 98-104%.
+                moved = self._moved(pose, period)
                 dispatched, src_fid = None, None
                 if pending is not None:
                     ctl, act, src_fid = pending
@@ -387,7 +393,7 @@ class PolicyRunner(object):
                     "pose_age_s": page,
                     "dispatch": dispatched,
                     "src_fid": src_fid,          # which frame this command was planned from
-                    "moved": self._moved(pose, period),
+                    "moved": moved,
                     "plan": _act_rec(act, controls[idx - 1]),
                     "timing": {"wait_ms": 1e3 * self._t["wait_s"],
                                "plan_ms": 1e3 * self._t["plan_s"],
@@ -452,8 +458,14 @@ class PolicyRunner(object):
         self._prev_pose = np.array(pose, dtype=float)
         if prev is None or cmd is None or self.pose_source == "dead_reckon":
             return None
-        dxy = float(np.hypot(pose[0] - prev[0], pose[1] - prev[1]))
         dyaw = float(np.arctan2(np.sin(pose[2] - prev[2]), np.cos(pose[2] - prev[2])))
+        # Distance ALONG THE ARC, not the chord between the two poses. The command
+        # is a speed along the path, so comparing it with a chord understates the
+        # ratio whenever the car is turning -- it read a steady 0.83 on runs whose
+        # actual speed tracking was 98-104%. arc = chord * (a/2) / sin(a/2).
+        chord = float(np.hypot(pose[0] - prev[0], pose[1] - prev[1]))
+        half = abs(dyaw) / 2.0
+        dxy = chord * (half / np.sin(half)) if half > 1e-3 else chord
         cxy = float(np.hypot(cmd[0], cmd[1]) * dt)
         cyaw = float(cmd[2] * dt)
         self._cum[0] += dxy; self._cum[1] += cxy

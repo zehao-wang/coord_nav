@@ -3,6 +3,53 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.4 - 2026-07-25 - the obstacle barrier saturated: one clip caused 41% of collisions
+
+`obstacle_cost` computed `encroach = clip(obs_buffer - clearance, 0, obs_buffer)`.
+The upper clip made the term a CONSTANT once the state was inside inflation.
+Measured: `dC/d(clearance)` was exactly **0.00 /m** at every depth from -0.05 m to
+-0.30 m, against +8.33 /m just outside. Nothing pushed the car back out.
+
+It compounded with `collided` being one boolean per rollout: when EVERY sample
+collides, the 1e6 is a common offset that cancels in the argmin, so the winner was
+chosen on goal cost alone -- drive straight at the obstacle. Reproduced: with the
+car inside inflation and B beyond the obstacle, the policy commanded
+`v=0.220 w=+0.000`, i.e. dead ahead.
+
+Fix is one character of intent: `np.maximum(buf - clr, 0.0)`, no upper clip, so the
+penalty keeps growing with depth and the least-bad rollout is the shallowest.
+Gradient now rises monotonically inside inflation (8.33 -> 28.33 /m). The same
+constructed case now commands `v=0.220 w=-1.010` -- turning away.
+
+**Offline, 20 seeds:**
+
+| | before | after |
+|---|---|---|
+| v1 tight suite success | 0.583 | **0.983** |
+| v1 tight suite collisions | **0.408** | **0.000** |
+| v1 realistic (B=2.5 m) | 1.000 | 1.000 / 0 coll |
+| v1 live cfg, mag 40 | - | 1.000 / 0 coll |
+| frozen (never moved) | - | **0.000** everywhere |
+
+That single clip was responsible for essentially all of variant 1's collisions, and
+the "car freezes" failure went with it: standing still had been the only rollout
+that escaped the flat penalty, and now escaping actually pays.
+
+**On the car:** 3/3 reached, 5.3 / 4.9 / 4.9 s, 1.48 / 1.44 / 1.44 m against a
+1.5 m goal.
+
+Also fixed two bugs in the tick log's own `real/cmd` divergence metric, found while
+reading these runs:
+- it compared the pose delta with the command dispatched in the SAME tick, but that
+  delta was produced by the PREVIOUS tick's command -- off by one. The measurement
+  now happens before dispatch.
+- it used the chord between consecutive poses against a commanded path length, which
+  understates whenever the car turns. Now converts chord to arc.
+Together these moved a run's cumulative translation ratio 0.811 -> 0.877 and yaw
+0.535 -> 0.706. The residual gap is genuine transient response: the steady-state
+sweep tracks 98-104 %, but per tick the command changes and the car is still
+accelerating into it.
+
 ## 0.9.3 - 2026-07-25 - cross-tick control continuity: implemented, measured, left OFF
 
 The yaw command reversed sign tick to tick faster than the chassis could follow.

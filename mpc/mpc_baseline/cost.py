@@ -42,9 +42,20 @@ def obstacle_cost(states, field, robot_cfg, cost_cfg, dt):
     inside = clr < 0.0
     collided = inside.any(axis=1)
 
-    # soft barrier: penalise the buffer zone just outside inflation, quadratically
+    # Soft barrier: quadratic in how far INTO the buffer a state is, and it keeps
+    # growing once past inflation instead of saturating.
+    #
+    # This used to be clip(buf - clr, 0, buf), capped at buf. Inside inflation
+    # (clr < 0) that made the term a CONSTANT -- measured, dC/d(clearance) was
+    # exactly 0.00/m at every depth from -0.05 m to -0.30 m, against +8.33/m just
+    # outside. So nothing pushed the car back out. Worse, `collided` below is one
+    # boolean per rollout, so when EVERY sample is colliding the 1e6 is a common
+    # offset and cancels in the argmin: the winner was then chosen on goal cost
+    # alone, i.e. drive straight at the obstacle. Not clipping the top gives a
+    # restoring gradient that grows with depth, so the least-bad rollout is the
+    # shallowest one -- which is the behaviour you want when already inside.
     buf = cost_cfg.obs_buffer
-    encroach = np.clip(buf - clr, 0.0, buf)                  # 0 outside buffer
+    encroach = np.maximum(buf - clr, 0.0)                    # 0 outside the buffer
     soft = cost_cfg.w_obs * (encroach ** 2).sum(axis=1) * dt   # integral, see goal_cost
 
     cost = soft + collided * cost_cfg.collision_cost
