@@ -3,6 +3,47 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.1 - 2026-07-25 - calibration reproduced; variant 1 no longer spirals
+
+Re-ran the calibration at a different battery voltage and finished the on-car
+tests that were still open.
+
+**Reproducibility (PWM 30/40/60 per axis, fit residuals +-0.003 m/s):**
+
+    9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194
+    10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- now shipped
+
+The slope moved 1.8 % and the arm 2 %; the friction threshold moved most
+(17 -> 14 PWM, since more torque breaks stiction at a lower PWM). **My earlier
+warning that pwm_per_mps would be "WRONG for a charged pack" was overstated** --
+it is barely voltage-sensitive. The arm is a ratio of the two axes measured at the
+same voltage, which is why both runs agree on it; that is the number to trust.
+
+**Variant 1 reaches the goal on the car.** Before calibration the same policy
+spiralled: yaw -145 deg, 1.40 m travelled for a 0.6 m goal, timeout, and w pinned
+at -1.200 for 12 consecutive ticks. After: reached in 3.96 s, 1.16 m travelled for
+a 1.2 m goal, yaw -9 deg, w never above 0.68, and the tick log shows
+`flags REACHED=1` -- no WPIN, no AWAY, no ZERO -- with gd falling monotonically
+1.200 -> 0.098.
+
+**Two unmodelled effects the new instrumentation measured, both still open:**
+
+- **v-w coupling.** The `arc` test (end-to-end, deadzone included) at v=0.361:
+  straight tracks 99 %, but at w=0.6 forward speed is 90 % and at w=1.2 only
+  **53 %**. Skid-steering scrubs forward speed; `rollout_unicycle` assumes v is
+  independent of w. A first cut is v_eff = v*(1 - k*w^2) with k ~ 0.30 from these
+  three points.
+- **Yaw lag.** Cumulative measured/commanded over the successful run was 0.810 on
+  translation (consistent with the coupling above plus the standing start) and
+  **0.451 on yaw**. The command oscillated +0.68 / +0.50 / -0.40 / -0.53 tick to
+  tick and the car cannot follow that; this is the previously qualitative "omega
+  command jitter" now quantified. Per-tick ratios are noisy (0.33-1.20); the
+  cumulative figure is the signal.
+
+Also fixed a bug in `smoke/calib_model.py`: the `arc` test computed its test speed
+as `mag / pwm_per_mps`, the old proportional form, so it drove at 0.555 m/s
+instead of the intended v_max 0.361. It now uses the affine inverse.
+
 ## 0.9.0 - 2026-07-25 - plant model CALIBRATED; tick log completed
 
 ### The plant is affine, not proportional

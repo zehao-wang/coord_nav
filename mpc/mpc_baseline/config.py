@@ -29,19 +29,26 @@ class RobotConfig:
 
         wheel m/s = (PWM - pwm_offset) / pwm_per_mps
 
-    Fitted over PWM 30/40/60: pwm_per_mps 73.4, pwm_offset 17.0, residuals
-    +-0.003 m/s. The same offset falls out of the yaw axis independently (18.4),
-    and once it is accounted for the yaw arm becomes a constant 0.194 m instead of
-    drifting 0.168 -> 0.095 with PWM. See mpc/README.md for the procedure.
+    Measured twice, at two battery voltages, PWM 30/40/60 per axis (fit residuals
+    +-0.003 m/s):
 
-    CAVEAT: pwm_per_mps was measured at 9.8 V (a healthy pack is 11-13 V) and motor
-    speed at a given PWM falls with voltage, so re-run the linear test on a charged
-    pack. pwm_offset (a threshold) and wz_arm (a ratio) are far less sensitive.
+        9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194
+        10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- shipped
+
+    Voltage sensitivity is therefore SMALL for the slope (1.8 %) and for the arm
+    (2 %), and larger for the friction threshold (17 -> 14 PWM: more torque is
+    available, so a lower PWM breaks stiction). The arm is a geometry ratio, so
+    measuring both axes at the SAME voltage cancels the voltage out -- that is the
+    number to trust, and it is why the two runs agree on it.
+
+    Once the offset is accounted for the arm is a CONSTANT (0.216/0.196/0.184
+    across PWM); under the old proportional model it "drifted" 0.168 -> 0.095, i.e.
+    a friction offset was masquerading as wrong geometry. See mpc/README.md.
     """
     robot_radius: float = 0.13        # half-footprint of the mecanum car (m)
-    pwm_per_mps: float = 73.4         # MEASURED slope (was a nominal 200)
-    pwm_offset: float = 17.0          # MEASURED friction threshold, PWM
-    wz_arm: float = 0.194             # MEASURED yaw arm (m); was a nominal 0.5
+    pwm_per_mps: float = 72.1         # MEASURED slope (was a nominal 200)
+    pwm_offset: float = 14.0          # MEASURED friction threshold, PWM
+    wz_arm: float = 0.196             # MEASURED yaw arm (m); was a nominal 0.5
     wheel_pwm_cap: float = 80.0       # clamp on any wheel PWM (car caps at 100)
     diag_mult: float = 1.6            # diagonal magnitude boost (matches carclient)
     strafe_mult: float = 1.2          # strafe magnitude boost (matches carclient)
@@ -115,7 +122,7 @@ class Variant1Config:
                                       # the sharper turn. Inner wheel still rolls forward at it.
     # Differential drive: all wheels forward, steer by L/R speed difference; the constraint
     # keeps the inner wheel >= min_inner_frac * v so it never pivots (smoothness is w_smooth).
-    steer_arm: float = 0.194          # MEASURED yaw arm (m) so commanded w == actual yaw
+    steer_arm: float = 0.196          # MEASURED yaw arm (m) so commanded w == actual yaw
                                       # rate; also the inner-wheel-constraint arm. The old
                                       # 0.10 let the planner ask for turns twice as tight as
                                       # the car can do, which is why it spiralled.

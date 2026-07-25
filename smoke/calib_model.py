@@ -151,7 +151,7 @@ def test_arc(car, mag, secs, cfg):
     if clear < 1.0:
         print("  NOT ENOUGH SPACE -- skipping arc test")
         return
-    v = mag / cfg.robot.pwm_per_mps
+    v = C._v_of_pwm(mag, cfg.robot)      # affine inverse, NOT mag/pwm_per_mps
     for frac in (0.0, 0.5, 1.0):
         wlim = min(cfg.w_max, (1.0 - cfg.min_inner_frac) * v / cfg.steer_arm)
         wc = wlim * frac
