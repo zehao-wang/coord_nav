@@ -81,9 +81,19 @@ class Variant1Policy(Policy):
         seqs = nom[None] + noise
         seqs[0] = nom                         # always evaluate the nominal itself
         seqs[:, :, 0] = np.clip(seqs[:, :, 0], self.cfg.v_min, self.cfg.v_max)
-        # differential-drive yaw limit; max(0,..) guards v<0 (would invert the clip)
-        wlim = np.maximum(0.0, np.minimum(self.cfg.w_max,
-                                          (1.0 - frac) * seqs[:, :, 0] / arm))
+        # Yaw limit = what the car can actually DELIVER, not what the mix will accept.
+        # The mix limit (inner wheel stays forward) is (1-frac)*v/arm; the yaw
+        # feedforward then has to add yaw_deadband on top to overcome roller scrub,
+        # and IT is capped by the same mix limit. So clipping the policy to the mix
+        # limit made the feedforward a no-op exactly at the limit: measured commanded
+        # -> realised 46 % at magnitude 20 and 85 % at 30 (100 % only at 40, which is
+        # the one magnitude the on-car test used). Asking only for the achievable
+        # value makes commanded == realised at every magnitude.
+        robot = self.cfg.robot
+        raw = (1.0 - frac) * seqs[:, :, 0] / arm
+        achievable = getattr(robot, "yaw_gain", 1.0) * np.maximum(
+            0.0, raw - getattr(robot, "yaw_deadband", 0.0))
+        wlim = np.maximum(0.0, np.minimum(self.cfg.w_max, achievable))
         seqs[:, :, 1] = np.clip(seqs[:, :, 1], -wlim, wlim)
         return seqs
 
@@ -146,11 +156,15 @@ class Variant2Policy(Policy):
         goal = np.asarray(obs.goal, dtype=float)[:2]
         seqs = self._candidates()                         # (K, H) action indices
         body = self.table[seqs]                           # (K, H, 3) body velocities
-        states = rollout_body(pose, body, self.cfg.step_duration)
+        # Roll out at the EXECUTION step, not the hop's life: the runner dispatches a
+        # hop and the next tick supersedes it, so only one tick of each hop actually
+        # happens. Rolling out at step_duration=0.5 against a 0.333 s tick predicted
+        # every hop 50% longer than the car performs.
+        dt = getattr(self.cfg, "rollout_dt", None) or self.cfg.step_duration
+        states = rollout_body(pose, body, dt)
 
         cost, _collided = total_cost_discrete(
-            states, goal, obs.field, self.cfg.robot, self.cfg.cost,
-            self.cfg.step_duration)
+            states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt)
 
         best = int(np.argmin(cost))
         best_seq = seqs[best]

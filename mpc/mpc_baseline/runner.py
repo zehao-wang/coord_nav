@@ -80,6 +80,15 @@ class PolicyRunner(object):
 
         self.field = ObstacleField(obs_cfg, time.monotonic)
         tick = live_cfg.tick
+        # The model step IS the tick -- the first planned step is what gets executed,
+        # for exactly one tick. Storing the rate in two places let them drift: the
+        # GUI's "tick Hz (global)" spinbox and run_live's --tick-hz reached the
+        # runner but NOT MPPIConfig.dt, so changing the rate silently left the
+        # planner integrating at the old one.
+        if getattr(cfg, "mppi", None) is not None:
+            cfg.mppi.dt = tick.period
+        if hasattr(cfg, "rollout_dt"):          # discrete: same rule, see Variant2Policy
+            cfg.rollout_dt = tick.period
         if self.action_space == "velocity":
             # The car keep-alives each pulse for tick.action_duration (>1 tick), so a
             # single dropped command holds the last velocity instead of stuttering,
@@ -166,6 +175,9 @@ class PolicyRunner(object):
         """Drive to B. Blocks until reached / aborted / timed out / estopped.
         Returns a summary dict. Call abort() from another thread to stop early."""
         self._abort = False
+        self._prev_pose = None                # per-run divergence bookkeeping
+        self._cmd_body = None
+        self._cum = [0.0, 0.0, 0.0, 0.0]
         if self.client.wait_obstacles(timeout=5.0) is None:
             raise RuntimeError("no /obstacles -- is perception running? (roscar)")
 
@@ -332,7 +344,9 @@ class PolicyRunner(object):
                 # self._cmd_body. Measuring after the dispatch compared this tick's
                 # pose delta with next tick's command -- off by one, and it read a
                 # steady 0.81 on runs whose steady-state tracking is 98-104%.
-                moved = self._moved(pose, period)
+                # measured interval, not the nominal one: a tick that overran or
+                # caught up would otherwise be scored against the wrong duration
+                moved = self._moved(pose, self._t["period_s"] or period)
                 dispatched, src_fid = None, None
                 if pending is not None:
                     ctl, act, src_fid = pending
@@ -525,6 +539,12 @@ class PolicyRunner(object):
             self.act.set_velocity(0.0, 0.0, 0.0)
         else:
             self.act.stop()
+        # Break the measured-vs-commanded pairing: the next tick's motion was NOT
+        # produced by the last dispatched command, and leaving them paired fabricates
+        # a ratio and permanently skews the cumulative figure the calibration work
+        # quotes as evidence.
+        self._cmd_body = None
+        self._prev_pose = None
 
     def _shutdown_actuator(self):
         try:

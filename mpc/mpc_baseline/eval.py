@@ -87,7 +87,11 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
     for world in scenarios:
         sim = KinematicSim(world, sense_range=sense_range,
                            robot_radius=cfg.robot.robot_radius, seed=seed)
-        policy = (Variant1Policy(cfg) if is_v1 else Variant2Policy(cfg, seed=seed))
+        # seed BOTH variants: Variant1Policy was getting the default 0 every time, so
+        # run_variant(seed=N) only varied the simulator and the documented multi-seed
+        # protocol was a no-op through this API.
+        policy = (Variant1Policy(cfg, seed=seed) if is_v1
+                  else Variant2Policy(cfg, seed=seed))
         results.append(run_episode(sim, policy, variant, obs_cfg, cfg.goal,
                                    plan_dt=dt, robot_cfg=cfg.robot))
     return results

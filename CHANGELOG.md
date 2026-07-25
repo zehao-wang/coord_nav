@@ -3,6 +3,75 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.5 - 2026-07-25 - review round: the yaw feedforward was a no-op below magnitude 40
+
+A 5-lens adversarial review of `77b1c96..HEAD` returned 53 findings. The important
+ones, fixed here.
+
+### CRITICAL: the yaw feedforward cancelled itself except at magnitude 40
+
+`Variant1Policy._perturb` clipped `|w|` to the MIX limit `(1-min_inner_frac)*v/arm`
+(inner wheel stays forward). `yaw_feedforward` then adds `yaw_deadband` on top to
+break roller scrub -- and is capped by that *same* mix limit. So at the limit the
+compensation was clipped straight back to where it started:
+
+    magnitude 20   policy asks 0.382   ->  car delivers 0.176   =  46 %
+    magnitude 30   policy asks 1.019   ->  car delivers 0.863   =  85 %
+    magnitude 40   policy asks 1.200   ->  car delivers 1.200   = 100 %
+
+**The on-car validation used magnitude 40 -- the one value where it happens to
+work.** Fixed by clipping the policy to the yaw the car can actually DELIVER,
+`yaw_gain * max(0, mix_limit - yaw_deadband)`, so commanded == realised at every
+magnitude (verified 100 % at 20/30/40/60). Magnitude 40 is unchanged, so the
+five 5 m runs recorded in `output/2026-07-25_20-0*` remain valid evidence.
+
+### Other fixes
+
+- **Variant 2 rolled out at 0.5 s while the car executes one 0.333 s tick** -- the
+  same model-vs-execution mismatch already fixed for variant 1, missed for the
+  discrete path. `step_duration` now means only the hop's LIFE on the car (it must
+  outlive a tick so the next tick supersedes it instead of it expiring into a
+  brake); the new `rollout_dt`, set by the runner to the tick, is the model step.
+- **The tick rate did not reach the model.** The GUI's "tick Hz (global)" spinbox
+  and `--tick-hz` reached the runner but not `MPPIConfig.dt`, so changing the rate
+  left the planner integrating at the old one. The runner now syncs both.
+- **`eval.run_variant` never passed its seed to `Variant1Policy`** -- the repo's own
+  multi-seed protocol was a no-op through the shipped API (our published numbers
+  came from ad-hoc scripts that passed it explicitly). Both variants now get it.
+- **A hold poisoned the divergence metric**: `_hold()` left the last dispatched
+  command paired with the next tick's motion, fabricating a ratio and permanently
+  skewing the cumulative figure quoted as calibration evidence. It now clears the
+  pairing. `run()` also resets it per run, and `_moved` divides by the MEASURED
+  interval rather than the nominal one.
+- **A `real/cmd` ratio of exactly 0.00 rendered as "-"** (no data) because the code
+  tested truthiness. 0.00 means THE CAR DID NOT MOVE, which is the most important
+  thing that column can say.
+
+### Offline after the fixes, 20 seeds (policy seed now genuinely varies)
+
+    v1 tight suite   0.992 success / 0.008 collide / 0.000 frozen
+    v1 realistic     1.000 / 0.000 / 0.000
+    v1 live mag 40   1.000 / 0.000 / 0.000
+    v2 tight suite   0.833 / 0.000 / 0.000
+
+### From the operator's five 5 m runs (`output/2026-07-25_20-0*`)
+
+All five reached B, final distance 0.05-0.11 m. Two things the tick log caught that
+are still OPEN:
+
+- **`NEAR` x3 in one run**: the nearest obstacle edge reached **0.09 m** and the
+  remembered one **0.00 m**, against `robot_radius` 0.13 -- the footprint was
+  overlapping a circle. The collision guard is OFF by default in the GUI, so
+  nothing intervened.
+- **`ZERO` x2** at `gd` 0.35 and 0.29, well short of the 0.15 m tolerance: the
+  "car freezes" mode still appears transiently near the goal. It recovered on its
+  own the next tick.
+- `WPIN` on 13-36 % of ticks at magnitude 40, i.e. the policy often wants more yaw
+  than `w_max=1.2` allows.
+
+Not fixed: ~45 lower-severity findings, mostly stale numbers in comments and docs
+from the several rounds of re-measurement this session.
+
 ## 0.9.4 - 2026-07-25 - the obstacle barrier saturated: one clip caused 41% of collisions
 
 `obstacle_cost` computed `encroach = clip(obs_buffer - clearance, 0, obs_buffer)`.

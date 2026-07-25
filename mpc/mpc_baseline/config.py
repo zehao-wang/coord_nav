@@ -161,7 +161,13 @@ class Variant2Config:
     # 0 to allow STOP, or 9/10 to allow rotation.
     actions: Tuple[int, ...] = (1, 2, 3, 4, 5, 6, 7, 8)
     step_magnitude: float = 40.0      # PWM magnitude per hop (sim); live overrides
-    step_duration: float = 0.5        # seconds per hop ("cell" size)
+    step_duration: float = 0.5        # the hop's LIFE on the car (s). Must outlive one tick
+                                      # so the next tick SUPERSEDES it rather than it expiring
+                                      # into a brake. NOT the rollout step -- see rollout_dt.
+    rollout_dt: float = None          # model step for the rollout; the runner sets it to the
+                                      # tick period, because ONE tick of the hop is what
+                                      # actually gets executed before the next one replaces it.
+                                      # None = fall back to step_duration (offline default).
     horizon: int = 4                  # hops looked ahead
     samples: int = 1024               # sampled action sequences (if not exhaustive)
     exhaustive_cap: int = 20000       # enumerate all seqs when |A|^H <= this

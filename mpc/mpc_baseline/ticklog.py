@@ -169,8 +169,11 @@ class TickLog(object):
         makes a planner ask for turns the car cannot make."""
         if not m:
             return "%-12s" % "--"
-        rx = ("%.2f" % m["r_xy"]) if m.get("r_xy") else "-"
-        rw = ("%.2f" % m["r_yaw"]) if m.get("r_yaw") else "-"
+        # test for None, not truth: a ratio of exactly 0.00 means THE CAR DID NOT
+        # MOVE, which is the single most important thing this column can say, and
+        # `if m.get("r_xy")` rendered it as "-" (no data).
+        rx = "-" if m.get("r_xy") is None else "%.2f" % m["r_xy"]
+        rw = "-" if m.get("r_yaw") is None else "%.2f" % m["r_yaw"]
         return "%-12s" % ("x%s w%s" % (rx, rw))
 
     @staticmethod
