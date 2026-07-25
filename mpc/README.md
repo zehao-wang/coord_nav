@@ -137,12 +137,12 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | `TickConfig.rate_hz` | 3.0 | **全局唯一频率**，必须等于车端感知率（`viz.launch` 的 `obstacle_circles rate_hz`）|
 | `TickConfig.action_ticks` | 1.5 | 一条指令在车上的存活时长（tick 数）。>1 使单次丢包不抖动，<2 使连丢两次后刹车 |
 | `GoalConfig.goal_dist / goal_y` | 1.0 / 0.0 | B 相对起点：前 x、左 y（米）；GUI/实验默认用 3.0 |
-| `LiveConfig.magnitude` | 20 | 实车 PWM 幅值。**摩擦阈值 17 PWM**，所以 mag 20 只有 v_max≈0.04 m/s（几乎不动）；**实用值 40**（≈0.31 m/s），GUI 默认也是 40 |
+| `LiveConfig.magnitude` | 20 | 实车 PWM 幅值。**摩擦阈值 14 PWM**，所以 mag 20 只有 v_max≈0.08 m/s（几乎不动）；**实用值 40**（≈0.36 m/s），GUI 默认也是 40 |
 | `LiveConfig.collision_abort` | True | 逼近碰撞软停（GUI/smoke 默认**关**，障碍圆自带 margin）|
-| `RobotConfig.pwm_per_mps / pwm_offset` | 73.4 / 17.0 | **实测**仿射被控对象 `轮速=(PWM−17)/73.4`。见上面的标定小节 |
-| `RobotConfig.wz_arm`, `Variant1Config.steer_arm` | 0.194 | **实测**偏航臂（米），使指令 w == 实际偏航率 |
-| `Variant1Config.w_max` | 1.2 | 偏航上限 → 最小转弯半径 = v/w：mag 40 → **0.26 m** |
-| `MPPIConfig.horizon / dt` | 29 / 1/3 | `dt` **就是一个 tick**（执行的正是第一步）；H·dt ≈ 9.7 s 前视，mag 40 下 ≈3.0 m |
+| `RobotConfig.pwm_per_mps / pwm_offset` | 72.1 / 14.0 | **实测**仿射被控对象 `轮速=(PWM−14)/72.1`。见下面的标定小节 |
+| `RobotConfig.wz_arm`, `Variant1Config.steer_arm` | 0.196 | **实测**偏航臂（米），使指令 w == 实际偏航率 |
+| `Variant1Config.w_max` | 1.2 | 偏航上限 → 最小转弯半径 = v/w：mag 40 → **0.30 m** |
+| `MPPIConfig.horizon / dt` | 29 / 1/3 | `dt` **就是一个 tick**（执行的正是第一步）；H·dt ≈ 9.7 s 前视，mag 40 下 ≈3.5 m |
 | `MPPIConfig.noise_tau` | 0.8425 | 采样噪声的 AR(1) 时间常数（**秒**，不是每步），改 tick 率时机动时长不变 |
 | `CostConfig.w_track` | 4.17 | 回归 A→B 直线的拉力（太大→绕不开线上的宽墙）|
 | `CostConfig.extra_margin / obs_buffer` | 0.10 / 0.15 | 障碍膨胀额外边距 / 软墙作用范围 |
