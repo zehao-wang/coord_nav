@@ -74,7 +74,7 @@ while not car.is_shutdown():            # 典型模型循环
 
 - `car.obstacles()` → `Obstacles(frame_id, circles, age)`；`circles` 每个 `(x, y, r)` 米、base 系（x 前 y 左）。非阻塞、线程安全缓存。
 - `car.observation()` → `Frame(frame_id, circles, points, age)` —— **一个采样**：`circles` 和 `points` 保证是同一个 `frame_id`（车上同一次处理、同一帧 scan）。**画图用这个**。`points` 为 `None` 表示这帧还没配上点（不会拿别帧的点顶替）。
-- `car.scan_points()` → 原始 `/scan` 转 base 系的点，**和圆不同步**（车端按 `rate_hz` 定时取最新 scan，约 60% 的 scan 没参与生成圆）。只在你要原始雷达数据时用。
+- `car.scan_points()` → 原始 `/scan` 转 base 系的点，**和圆不同步**（车端按 `rate_hz` 定时取最新 scan，约 60% 的 scan 没参与生成圆）。**需要 `CarClient(subscribe_scan=True)`**，默认关：`/scan` 实测 43 KB/s，而这条 WiFi 链路的延迟曾是闭环失稳的根因，不为没人读的数据占着。画图请用 `observation()`（同步且只要 1/3 带宽）。
 - `car.drive(action, magnitude=None, duration=None)` → 幅值/时长省略用默认（40 / 0.5s）。
 - `car.on_result(cb)` / `car.last_result()` → 每步完成回报 `{"action","reason","took_ms",...}`。
 - `car.stop()` 软停；`car.estop()` 硬急停（SSH 跑 estop.sh，杀 car-ros）；`car.connected()` 判活。

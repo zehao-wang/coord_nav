@@ -25,7 +25,7 @@ import math
 import time
 import threading
 import subprocess
-from collections import namedtuple, deque
+from collections import namedtuple, deque, OrderedDict
 
 import rospy
 from std_msgs.msg import Float32MultiArray, String, Float32
@@ -90,13 +90,22 @@ class CarClient(object):
     def __init__(self, magnitude=40.0, duration=0.5, stale_after=1.0,
                  car_ip=None, ssh_key=None, init_node=True, dump_path=None,
                  diag_mult=1.6, strafe_mult=1.2,
-                 lidar_yaw=math.pi, lidar_x=0.0, lidar_y=0.0):
+                 lidar_yaw=math.pi, lidar_x=0.0, lidar_y=0.0,
+                 subscribe_scan=False):
         """magnitude/duration are the conservative defaults for drive();
         stale_after (s) is when obstacles count as disconnected. car_ip/ssh_key
         are only for estop() and fall back to $CAR_IP / $CAR_SSH_KEY. dump_path:
         if given, every obstacle frame is appended to it as JSONL (in-memory
         history stays bounded to the last 100 frames). lidar_yaw/x/y is the
-        laser->base 2D transform used by scan_points() (match viz.launch)."""
+        laser->base 2D transform used by scan_points() (match viz.launch).
+
+        subscribe_scan (default OFF) enables the raw /scan subscription behind
+        scan_points(). It is off by default because /scan costs ~43 KB/s over the
+        car's WiFi (measured: 7.6 Hz x 720 beams) and viewers should use
+        observation()/obstacle_points() instead -- those are frame-synced with the
+        circles AND a third of the bandwidth. Link latency on this car has already
+        been a root cause of closed-loop failure, so we do not hold the link open
+        for data nobody reads. Turn it on only if you genuinely want raw beams."""
         self.default_mag = magnitude
         self.default_dur = duration
         self.diag_mult = diag_mult
@@ -115,7 +124,9 @@ class CarClient(object):
         self._volt = None              # (voltage, monotonic_time)
         self._pose = None              # (x, y, yaw, monotonic_time)
         self._scan = None              # (base-frame points [(x,y),...], monotonic_time)
-        self._opts = {}                # frame_id -> (points [(x,y),...], monotonic_time)
+        # frame_id -> (points [(x,y),...], monotonic_time). Ordered: evicted by
+        # arrival, not by id (the car's frame counter restarts with car-ros).
+        self._opts = OrderedDict()
 
         if init_node and not rospy.core.is_initialized():
             rospy.init_node("carclient", anonymous=True, disable_signals=True)
@@ -137,7 +148,9 @@ class CarClient(object):
                          self._on_obs_points, queue_size=2)
         rospy.Subscriber("/drive_result", String, self._on_res, queue_size=10)
         rospy.Subscriber("/odom", Odometry, self._on_odom, queue_size=5)
-        rospy.Subscriber("/scan", LaserScan, self._on_scan, queue_size=1)
+        self._scan_on = bool(subscribe_scan)
+        if self._scan_on:                        # opt-in: ~43 KB/s, see __init__ doc
+            rospy.Subscriber("/scan", LaserScan, self._on_scan, queue_size=1)
         # /battery_v (std_msgs/Float32, republished on the car) not /battery:
         # sensor_msgs/BatteryState has an incompatible md5 across Melodic/Noetic.
         rospy.Subscriber("/battery_v", Float32, self._on_batt, queue_size=5)
@@ -208,25 +221,31 @@ class CarClient(object):
         d = m.data
         pts = [(d[i], d[i + 1]) for i in range(1, len(d) - 1, 2)]
         with self._lock:
+            # Evict by ARRIVAL ORDER, never by frame_id value: the car's
+            # frame_counter_ restarts at 1 whenever car-ros does (the watchdog and
+            # the GUI's Restart button both do this routinely). Keeping the
+            # numerically largest ids would pin the cache to the pre-restart ids
+            # and drop every new frame on arrival -- points would go permanently
+            # None until the client was restarted.
             self._opts[fid] = (pts, time.monotonic())
-            # keep only a few frames; circles and points arrive back-to-back so a
-            # couple is plenty, but ROS does not guarantee cross-topic ordering.
-            if len(self._opts) > self.POINT_FRAMES:
-                for k in sorted(self._opts)[:-self.POINT_FRAMES]:
-                    del self._opts[k]
+            self._opts.move_to_end(fid)
+            while len(self._opts) > self.POINT_FRAMES:
+                self._opts.popitem(last=False)
 
     def obstacle_points(self, frame_id=None):
         """Base-frame points from /obstacle_points as ObsPoints(frame_id, pts, age).
 
         These are the EXACT points the circles of that frame were clustered from,
         so they pair with obstacles() by frame_id. `frame_id=None` returns the
-        newest available; a specific id returns that frame or None. Unlike
-        scan_points() this is synchronised with the circles -- see observation().
+        most recently ARRIVED frame (not the numerically largest id -- the car's
+        counter restarts with car-ros); a specific id returns that frame or None.
+        Unlike scan_points() this is synchronised with the circles -- see
+        observation().
         """
         with self._lock:
             if not self._opts:
                 return None
-            fid = max(self._opts) if frame_id is None else frame_id
+            fid = next(reversed(self._opts)) if frame_id is None else frame_id
             snap = self._opts.get(fid)
         if snap is None:
             return None
@@ -268,9 +287,21 @@ class CarClient(object):
             self._scan = (pts, time.monotonic())
 
     def scan_points(self):
-        """Latest /scan as base-frame points ScanPoints(pts=[(x,y),...], age), or
-        None. Non-blocking. Same frame as obstacles()/the top-down view; there is
-        no radius -- the caller chooses one."""
+        """Raw /scan as base-frame points -- requires CarClient(subscribe_scan=True).
+
+        NOT synchronised with the circles: the car samples /scan on its own rate_hz
+        timer, so the newest scan here is usually not the one the current circles
+        came from. For drawing, use observation() instead.
+
+        Latest /scan as base-frame points ScanPoints(pts=[(x,y),...], age), or
+        None if none has arrived yet. Non-blocking. Same frame as obstacles()/the
+        top-down view; there is no radius -- the caller chooses one."""
+        if not self._scan_on:
+            raise RuntimeError(
+                "scan_points() needs CarClient(subscribe_scan=True); the raw /scan "
+                "subscription is off by default (~43 KB/s of WiFi for data most "
+                "callers do not want). For a point cloud that pairs with the "
+                "obstacle circles, use observation() / obstacle_points() instead.")
         with self._lock:
             snap = self._scan
         if snap is None:

@@ -3,6 +3,39 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.6.3 — 2026-07-25 — review of 0.6.2: frame-id reset bug, dead /scan subscription
+
+Self-review of the 0.6.2 change set found one real bug and one real redundancy.
+
+- **BUG: the point cache died permanently after a car-ros restart.** `_opts` was
+  pruned by keeping the numerically largest frame_ids
+  (`sorted(self._opts)[:-POINT_FRAMES]`). The car's `frame_counter_` restarts at 1
+  whenever car-ros does — which the rplidar watchdog and the GUI's "Restart
+  car-ros" button both do routinely — so every post-restart frame (1, 2, 3 …)
+  sorted below the retained pre-restart ids (101–104) and was deleted the instant
+  it arrived. `observation().points` then returned None **forever**, silently, until
+  the client process was restarted. Reproduced against the real callbacks: 7/7
+  post-restart frames unpaired, cache frozen at `[101,102,103,104]`. Fixed by
+  evicting in ARRIVAL order (`OrderedDict` + `move_to_end` / `popitem(last=False)`);
+  `obstacle_points(None)` likewise returns the newest *arrived* frame rather than
+  `max(id)`. After the fix all 7 post-restart frames pair and the stale ids flush
+  within POINT_FRAMES frames.
+- **REDUNDANCY: carclient still subscribed to `/scan` for nobody.** Moving the GUI
+  to `/obstacle_points` left `scan_points()` with zero callers in the repo, but the
+  subscription stayed unconditional in every CarClient — including inside the 4 Hz
+  MPC loop. Measured on the car: **43.3 KB/s** (7.6 Hz × 720 beams), ~3× what
+  `/obstacle_points` costs (15.2 KB/s) and ~17× `/obstacles` (2.6 KB/s). Link
+  latency on this car has already been a root cause of closed-loop failure, so the
+  subscription is now opt-in: `CarClient(subscribe_scan=True)`. `scan_points()`
+  raises a message pointing at `observation()` when it is off. `LidarOdometry` has
+  its own `/scan` subscriber, so `pose_source="lidar"` is unaffected.
+  (The CPU cost of the dead handler turned out to be negligible — 0.10 ms/scan =
+  0.08 % of a core — so bandwidth, not CPU, was the reason to change it.)
+- **GUI double-gating removed**: `_poll_tick` gated the points on the checkbox AND
+  `paintEvent` gated on `show_points`. The data gate also blanked the cloud for one
+  poll period each time the box was ticked. Points are now always handed to the
+  view and `show_points` alone decides whether to draw.
+
 ## 0.6.2 — 2026-07-25 — point cloud is now frame-synced with the obstacle circles
 
 The GUI drew the point cloud from `/scan` and the circles from `/obstacles`, two

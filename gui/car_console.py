@@ -508,8 +508,10 @@ class MainWindow(QMainWindow):
             self._obs_conn = connected
             self.log("ERR" if not connected else "GET",
                      "obstacles DISCONNECTED" if not connected else "obstacles reconnected")
-        self.view.render_frame(fid, circ, connected,
-                               points=pts if self.pc_cb.isChecked() else None)
+        # Always hand over the frame's points; the view's show_points flag decides
+        # whether to draw them. Gating here too would double-gate AND blank the
+        # cloud for one poll period every time the checkbox is ticked.
+        self.view.render_frame(fid, circ, connected, points=pts)
         self._rec_grab(fid)               # capture one video frame per new observation
         # circles are [x,y,r] in metres, base frame
         near = nearest_edge(circ)
