@@ -23,6 +23,20 @@ python scripts/run_sim.py --variant 1 --scenario slalom --plot /tmp/v1.png   # �
 python scripts/benchmark.py --json /tmp/bench.json                            # 全场景对比两变种
 ```
 
+当前基线（6 个内置场景，`sim_config`，seed 0）：
+
+| | 成功 | 碰撞 | 失败场景 |
+|---|---|---|---|
+| 变种1 `mpc_vw` | 5/6 (0.833) | 0 | `wall_inline` |
+| 变种2 `mpc_grid` | 5/6 (0.833) | 0 | `slalom` |
+
+> ⚠️ 这套 benchmark **不等于实车**，两个已知口径差：
+> ① `eval.py` 用 `plan_dt = MPPIConfig.dt = 0.6s` 跑闭环，而实车 runner 是 `1/plan_rate = 0.25s`
+>   —— 按实车节奏 + live 配置重跑，变种1 掉到 4/6；
+> ② 仿真的"真值"就是 planner 自己用的积分器（`rollout_body`），无噪声、无延迟、无死区畸变
+>   （`KinematicSim` 的 `noise_xy` / `dropout` 参数 `eval.run_variant` 从不设置）。
+> 所以这里的数字只说明"规划逻辑自洽"，不说明实车成功率。
+
 ### GUI（推荐，实车）
 ```bash
 bash gui/run_gui.sh          # 连车的 master，用当前 $DISPLAY（先按顶层 README 完成首次配置）
@@ -58,9 +72,13 @@ class MyPolicy(Policy):
         return Action.velocity(v, w)     # velocity: v 前进 m/s, w 偏航 rad/s
         # 离散则: return Action.discrete(action_id 0..10, magnitude PWM, duration s)
 
-    def reset(self):                     # 每次跑开始前调用，清 per-episode 状态（可选）
+    def reset(self):                     # 清 per-episode 状态（warm start 等）
         pass
 ```
+> ⚠️ **`reset()` 目前没有任何调用方**（`PolicyRunner.run()` 不调，GUI/CLI 也不调）。现在能正常工作
+> 是因为 GUI 和各脚本**每次跑都通过 registry 的 `build()` 新建一个 policy 实例**。所以：**不要把
+> 同一个 policy 实例复用于多次 run**，否则上一轮的 warm start / A→B 直线锚点会带进下一轮。
+> （已记为待修：应由 runner 在 `run()` 开头调用 `policy.reset()`。）
 
 **② 在 `mpc_baseline/registry.py` 注册一行**。`build(magnitude, goal_x, goal_y=0.0, step_duration=0.5, allow_rotation=False)` 是 GUI/CLI 调用的固定签名，返回 `(policy, cfg)`。注册项的 `action_space` **必须和你的 `Policy.action_space` 一致**（它决定 runner 绑哪个执行器：velocity→`/drive_wheels`、discrete→`/drive_action`）：
 ```python
@@ -94,10 +112,21 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `GoalConfig.goal_dist / goal_y` | 1.0 / 0.0 | B 相对起点：前 x、左 y（米）；GUI/实验默认用 3.0 |
-| `LiveConfig.magnitude` | 20 | 实车 PWM 幅值（<30 有死区；GUI 默认 40）|
+| `LiveConfig.magnitude` | 20 | 实车 PWM 幅值（<30 有死区；GUI 默认 **40**，实车验证过的也是 40）|
 | `LiveConfig.collision_abort` | True | 逼近碰撞软停（GUI/smoke 默认**关**，障碍圆自带 margin）|
-| `Variant1Config.w_max` | 1.2 | 偏航上限 → 最小转弯半径 v/w≈0.17m（越大越急，inner 轮仍前转）|
-| `MPPIConfig.horizon / dt` | 16 / 0.6 | 变种1 前视 ≈1.9m（差速靠转向，需比变种2 长；变种2 是 4）|
+| `Variant1Config.w_max` | 1.2 | 偏航上限。最小转弯半径 = v/w，**随 magnitude 变**：mag 40 → 0.17m；mag 20 → 0.11m（此时 w 被差速约束先卡在 0.9）|
+| `MPPIConfig.horizon / dt` | 16 / 0.6 | 变种1 前视 = H·dt·v，**随 magnitude 变**：mag 40 → ≈1.9m，mag 20 → ≈0.96m（差速靠转向，需比变种2 长；变种2 是 4）|
+
+> ⚠️ **实车不要用 magnitude 20 跑变种1。** `kinematics.velocity_to_wheel_pwm` 的死区补偿是
+> **逐轮独立**抬到 `deadzone_pwm=30` 的，会把转向差分抹平。实测指令 vs 实际偏航角速度：
+>
+> | magnitude（v_max） | w 指令 0.23 | 0.45 | 0.68 | 0.90 |
+> |---|---|---|---|---|
+> | **20**（0.10 m/s） | 0.00 (0%) | 0.00 (0%) | 0.09 (13%) | 0.15 (17%) |
+> | **40**（0.20 m/s） | 0.23 (100%) | 0.45 (100%) | 0.59 (87%) | 0.70 (78%) |
+>
+> mag 20 时 |w|≲0.45 四个轮子全被抬到 30 PWM → 只会直行（而且 vx 从 0.10 被抬成 0.15）。
+> 这是已知待修的模型/执行不一致（planner 不知道这个畸变），修好前实车用 **40**。
 | `CostConfig.w_track` | 2.5 | 回归 A→B 直线的拉力（太大→绕不开线上的宽墙）|
 | `CostConfig.extra_margin / obs_buffer` | 0.10 / 0.15 | 障碍膨胀额外边距 / 软墙作用范围 |
 
@@ -134,4 +163,11 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | `mpc_baseline/actuators.py` | `VelocityPulseActuator`(变种1) / `DriveActionActuator`(变种2) |
 | `scripts/` `../smoke/` | `run_sim`·`benchmark`·`run_live`·`calibrate_goal` / `policy_run`·`calib_gyro` |
 
-依赖 `carclient`、`carpolicy`（同仓库，`pip install -e`）。
+依赖 `carclient`、`carpolicy`（同仓库）。**在仓库根目录**装：
+
+```bash
+conda activate ros1 && pip install -e carclient -e carpolicy -e mpc   # -e 每个路径前都要写
+```
+
+装完别在仓库根目录用 `python -c` 导包（根目录的 `carclient/`、`carpolicy/` 同名目录会遮蔽已装的包）；
+把脚本当文件跑（`python mpc/scripts/run_sim.py`）不受影响。详见顶层 README 排查表。

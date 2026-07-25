@@ -3,6 +3,51 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.6.1 — 2026-07-25 — docs: install command was broken; stale/wrong doc claims fixed
+
+Documentation-only pass (no behaviour change). Every item below was reproduced.
+
+- **The install command in README never worked**: `pip install -e carclient carpolicy mpc`.
+  pip's `-e` takes ONE path — the other two were treated as PyPI package names, so the
+  command installed only `carclient` and then died with
+  `ERROR: Could not find a version that satisfies the requirement carpolicy`.
+  Consequence: **`mpc-baseline` was never installed** in the `ros1` env (`carclient`
+  and `carpolicy` had been installed separately at some point). Nothing broke in
+  practice only because every entry point does its own `sys.path.insert(...)`
+  (`gui/car_console.py:29`, `mpc/scripts/*.py`, `smoke/policy_run.py`). Fixed to
+  `pip install -e carclient -e carpolicy -e mpc`.
+- **Repo-root package shadowing documented properly.** The root dirs `carclient/` and
+  `carpolicy/` shadow the installed packages as empty namespace packages whenever cwd
+  is on `sys.path` (`python -c`, `python -m`, REPL) → `carpolicy.__file__ is None` and
+  `ImportError: cannot import name 'Policy' from 'carpolicy' (unknown location)`.
+  Running a script as a file is unaffected (repo root is not on `sys.path` then). The
+  old troubleshooting row mentioned only `carclient` and described it imprecisely.
+- **`reset()` is documented as "called before each run" but has ZERO callers** —
+  `PolicyRunner.run()` does not call it, nor does the GUI or any CLI. It works today
+  only because a fresh policy is built per run via `registry.build()`. Docstrings in
+  `carpolicy/__init__.py` and the "add your own model" guide in `mpc/README.md` now say
+  what is actually true, and flag it as a pending code fix.
+- **magnitude 20 cannot steer** — added to `mpc/README.md`. `velocity_to_wheel_pwm`
+  bumps each wheel INDEPENDENTLY up to `deadzone_pwm=30`, which flattens the steering
+  differential. Measured commanded-vs-realised yaw rate at `v_max`: mag 20 gives 0% of
+  commanded w for |w| <= 0.45 (all four wheels pinned at 30 PWM → pure straight line,
+  and vx inflates 0.10 → 0.15 m/s) and 17% at w=0.90; mag 40 gives 78–100%. The planner
+  models none of this. This is why the one validated real-car go-around was at mag 40.
+- **Benchmark numbers were absent from `mpc/README.md` and stale in this file.** Current
+  measured baseline is **5/6 for BOTH variants** (v1 fails `wall_inline`, v2 fails
+  `slalom`), not the "100 % reached, 0 collisions for both variants" recorded under
+  0.3.0 (left as-is there — it is a dated historical entry). Also documented the two
+  ways the offline suite differs from the car: `eval.py` closes the loop at
+  `plan_dt = MPPIConfig.dt = 0.6 s` while the live runner uses `1/plan_rate = 0.25 s`
+  (re-running at the live cadence with the live config drops v1 to 4/6), and the sim's
+  "ground truth" is the planner's own integrator with `noise_xy`/`dropout` never set.
+- Lookahead/turn-radius rows now state their magnitude dependence: lookahead
+  `H*dt*v` is ≈1.9 m at mag 40 but ≈0.96 m at mag 20; min turn radius `v/w` is 0.17 m
+  at mag 40 and 0.11 m at mag 20 (where the differential constraint caps w at 0.9 first).
+- `README.md` file table: dropped `car_ros/rplidar_watchdog.py` (that file is **not** in
+  this repo — it lives only on the car) and added the missing `carpolicy/`, `mpc/`,
+  `car_ros/viz.launch`, `output/` rows.
+
 ## 0.6.0 — 2026-07-24 — variant 1 → sampling MPC; gyro odom; WiFi latency; GUI recording
 
 - **Variant 1 refactored from CasADi NLP → continuous (v,ω) SAMPLING MPC (DWA)**

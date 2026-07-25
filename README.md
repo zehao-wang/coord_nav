@@ -23,10 +23,18 @@
    conda install -c conda-forge -c robostack-staging ros-noetic-desktop -y
    ```
 2. **改 `car_env.sh` 顶部 config 块**为本机：`CONDA_ROOT`（你的 conda 路径）、`SELF_IP`（本机在热点上的 IP）、`CAR_IP`（小车 IP）。
-3. **装 Python 包**（脚本 / 接模型 / GUI 都需要）：
+3. **装 Python 包**（脚本 / 接模型 / GUI 都需要）——在**仓库根目录**执行：
    ```bash
-   conda activate ros1 && pip install -e carclient carpolicy mpc
+   conda activate ros1 && pip install -e carclient -e carpolicy -e mpc
    ```
+   > ⚠️ `-e` 每个路径前都要写一次。写成 `pip install -e carclient carpolicy mpc` 只会装上
+   > `carclient`，后两个会被当成 PyPI 包名去查然后报
+   > `ERROR: Could not find a version that satisfies the requirement carpolicy`。
+   >
+   > 装完自检（**不要在仓库根目录跑**，见下）：
+   > ```bash
+   > cd /tmp && python -c "import carclient, carpolicy, mpc_baseline; print('ok')"
+   > ```
 4. **`/etc/hosts` 加一行**（客户端靠主机名收数据，少了会"能 list 但收不到数据"）：`10.42.0.187 jetson-desktop`
 5. *（可选）* `roscar` 快捷方式：`~/.bashrc` 里加 `roscar(){ source /绝对路径/car_env.sh; }`，等价于直接 `source car_env.sh`。
 
@@ -147,7 +155,9 @@ MCU 固件对 `set_motor` **无超时**，串口不稳时"停止"命令可能丢
 |---|---|
 | `rostopic list` / 连接卡住 | 小车没开机 / 没连 `coord_nav` / roscore 没起。先 `ping 10.42.0.187` |
 | 能 list 但收不到数据 | 查 `/etc/hosts` 有 `10.42.0.187 jetson-desktop`；当前终端 `roscar` 过 |
-| 找不到 `rostopic` / `carclient` | 忘了 `roscar`（没激活 conda `ros1`）。`carclient` 别在仓库根目录跑脚本（同名目录会遮蔽，脚本作为文件运行不受影响）|
+| 找不到 `rostopic` / `carclient` | 忘了 `roscar`（没激活 conda `ros1`）|
+| `ImportError: cannot import name 'Policy' from 'carpolicy' (unknown location)` | **在仓库根目录**用 `python -c` / `python -m` / 交互式 REPL 导包了。根目录下的 `carclient/`、`carpolicy/` 目录会把已装的同名包遮蔽成空 namespace package（`__file__` 为 `None`）。换个目录（`cd /tmp`）或直接把脚本当文件跑（`python mpc/scripts/run_sim.py`，此时仓库根不在 `sys.path`，不受影响）|
+| `ModuleNotFoundError: No module named 'mpc_baseline'` | `mpc` 没装上——多半是踩了上面那个 `pip install -e` 语法坑。重跑首次配置第 3 步 |
 | `/scan` 空、`/obstacles` 空 | rplidar 数据链路 wedge（电机还转、CP2102 卡）。`rplidar-watchdog` 会自动恢复；顽固时 `sudo systemctl restart car-ros` 等 ~15-20s，或 `sudo reboot`。**别用 USB unbind**（会掉网）|
 | 客户端读不到 `/battery`/某车端话题 | 跨 Melodic/Noetic msg md5 不兼容（如 BatteryState）。车端改用 std_msgs 类型转发（如 `/battery_v`）|
 | 热点不见了 | `sudo nmcli connection up jetson-ap` |
@@ -159,12 +169,16 @@ MCU 固件对 `set_motor` **无超时**，串口不稳时"停止"命令可能丢
 | 路径 | 作用 |
 |---|---|
 | `car_env.sh` | ROS 环境 + 网络变量（被 `roscar` 引用）|
-| `carclient/` | **Python API 包**（pip 可装）：`CarClient` / `Action` |
+| `carclient/` | **Python API 包**（`pip install -e`）：`CarClient` / `Action` |
+| `carpolicy/` | **通用 Policy 接口包**（`pip install -e`）：`Policy` / `Observation` / `Action` |
+| `mpc/` | **A→B 绕障 policy 框架 + 两个 MPC baseline**（`pip install -e`，包名 `mpc_baseline`）。见 [`mpc/README.md`](mpc/README.md) |
 | `gui/car_console.py` `gui/run_gui.sh` | PySide6 上位机 |
 | `obstacle_perception/` | C++ 障碍感知 ROS 包（部署到 Nano `~/catkin_ws/src/`）|
-| `car_ros/drive_action_node.py` | 车端离散动作节点 + 电压转发（部署到 `car_base/scripts/`）|
-| `car_ros/rplidar_watchdog.py` | 车端 rplidar 看门狗（`rplidar-watchdog.service`）|
-| `smoke/` | 连通性/单轮测试（`smoke_test.sh`、`wheel_test.*`、`wheel_diag.py`）|
+| `car_ros/car_base_node.py` `car_ros/drive_action_node.py` `car_ros/viz.launch` | 车端在用的源码副本（部署到 `car_base/`）|
+| `smoke/` | 连通性/单轮测试（`smoke_test.sh`、`wheel_test.*`、`wheel_diag.py`）+ 实车实验 `policy_run.py`、`calib_gyro.py` |
+| `output/` | GUI 每次 Execute 的录制（gitignored）|
+
+> `rplidar_watchdog.py` **只在车上**（`car_base/scripts/` + `rplidar-watchdog.service`），源码未纳入本仓库。
 
 ## 基础设施备忘（非日常）
 

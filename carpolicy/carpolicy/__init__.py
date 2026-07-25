@@ -21,7 +21,11 @@ OUTPUT  Action, in the policy's action_space:
   default; set LiveConfig.execute_steps > 1 to apply that many planned steps
   open-loop before re-planning. `traj` (H,3 predicted x,y,yaw) is viz-only.
 
-  reset(): clear per-episode state (warm starts); called before each run.
+  reset(): clear per-episode state (warm starts).
+           NOTE: no caller invokes this yet -- PolicyRunner.run() does not, and
+           neither does the GUI/CLI. They get away with it by building a FRESH
+           policy per run via registry build(). Do not reuse one policy instance
+           across runs until the runner calls reset() itself.
 """
 
 import abc
@@ -74,7 +78,9 @@ class Action(object):
 class Policy(abc.ABC):
     """Base for any A->B policy. Subclass, set `action_space`
     ("velocity"|"discrete"), override `plan`; override `reset` if it keeps
-    per-episode state. Every policy is interchangeable through this interface."""
+    per-episode state (but see the module docstring: nothing calls reset() yet --
+    build a fresh policy per run). Every policy is interchangeable through this
+    interface."""
 
     action_space = None
 
