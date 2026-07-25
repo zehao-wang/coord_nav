@@ -86,6 +86,7 @@ class PolicyRunner(object):
         self._link_seen = False
         self._abort = False
         self._dr = np.zeros(3)                # dead-reckoned pose [x, y, yaw]
+        self._t = {}                          # per-tick timing/continuity, for the tick log
         self._lodom = None
         if self.pose_source == "lidar":       # lidar ICP odometry (accurate forward)
             from .lidar_odom import LidarOdometry
@@ -187,15 +188,32 @@ class PolicyRunner(object):
             plan, idx = None, 0        # cached (controls, act) + step index into it
             pending = None             # (ctl, act) decided last tick, dispatched this tick
             last_fid = None
+            n_tick = 0
+            t_tick_prev = None
             while not self.client.is_shutdown():
                 # ---- TICK BOUNDARY: one observation frame = one tick ----------
+                t_wait0 = time.monotonic()
                 frame = self.client.wait_frame(after=last_fid,
                                                timeout=tick.wait_ticks * period)
+                t_tick = time.monotonic()
                 if frame is None:      # no new perception frame in time
                     self.log("no new observation frame -- holding")
                     self._hold()
                     plan, pending, idx = None, None, 0
                     continue
+                n_tick += 1
+                # Timing breakdown of the tick, so a log can show where the period
+                # went and whether the loop overran (planning + grace > period, which
+                # makes the NEXT wait_frame return instantly on an already-queued
+                # frame -- fine occasionally, a policy that is too slow if sustained).
+                self._t = {
+                    "tick": n_tick,
+                    "wait_s": t_tick - t_wait0,
+                    "period_s": None if t_tick_prev is None else t_tick - t_tick_prev,
+                    "skipped": (0 if last_fid is None else
+                                max(0, frame.frame_id - last_fid - 1)),
+                }
+                t_tick_prev = t_tick
                 last_fid = frame.frame_id
                 obs = frame
 
@@ -250,13 +268,18 @@ class PolicyRunner(object):
                         self._emit_step(pose, goal, gd, obs, action=aid, traj=act.traj)
 
                 # ---- PLAN this tick's observation -> the action for the NEXT tick.
-                if plan is None or idx >= min(n_exec, len(plan[0])):
+                t_plan0 = time.monotonic()
+                replanned = plan is None or idx >= min(n_exec, len(plan[0]))
+                if replanned:
                     self.field.update(obs.circles, pose)
                     act = self.policy.plan(Observation(pose, goal, obs.circles, self.field))
                     plan, idx = (self._controls_of(act), act), 0
                 controls, act = plan
                 pending = (controls[idx], act)
                 idx += 1
+                self._t["plan_s"] = time.monotonic() - t_plan0
+                self._t["replanned"] = replanned
+                self._t["work_s"] = time.monotonic() - t_tick
             return self._summary(reason, reached, goal, t0)
         except BaseException as exc:                       # incl. KeyboardInterrupt
             self.log("ABORT (%s) -- estop" % type(exc).__name__)
