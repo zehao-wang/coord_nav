@@ -1,4 +1,4 @@
-# Projects_jetson — 麦轮小车（Jetson Nano）操控工作区
+# coord_nav — Coord_Nav 项目的中间件
 
 小车是一块 **Jetson Nano**（Ubuntu 18.04 / ROS **Melodic**），跑 roscore + 感知/控制，**所有计算在车上**。这台 **workstation**（Ubuntu 22.04 / ROS **Noetic**，conda 环境 `ros1`）是纯 ROS 客户端：只**读碰撞球**、**发离散动作**。
 
