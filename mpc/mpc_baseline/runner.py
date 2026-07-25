@@ -29,6 +29,17 @@ from carpolicy import Observation
 from .policies import make_policy
 from .actuators import VelocityPulseActuator, DriveActionActuator
 from .kinematics import action_body_velocity, rollout_body
+from .ticklog import TickLog
+
+
+def _act_rec(act, ctl):
+    """One dispatched/planned action as a plain dict for the tick log."""
+    if act is None or ctl is None:
+        return None
+    if act.space == "velocity":
+        return {"space": "velocity", "v": float(ctl[0]), "w": float(ctl[1])}
+    return {"space": "discrete", "action_id": int(ctl[0]),
+            "magnitude": float(ctl[1]), "duration": float(ctl[2])}
 
 
 def _nearest_base_edge(circles):
@@ -45,7 +56,10 @@ class PolicyRunner(object):
     either a ready Policy or a variant key (which builds the MPC policy)."""
 
     def __init__(self, policy, cfg, live_cfg, obs_cfg, client, log=print,
-                 pose_source="odom", on_step=None, collision_estop=True):
+                 pose_source="odom", on_step=None, collision_estop=True,
+                 tick_log_dir=None, tick_log=True):
+        self.tick_log_dir = tick_log_dir   # None -> output/<start time>/
+        self.tick_log_on = tick_log
         self.cfg = cfg
         self.live = live_cfg
         self.obs_cfg = obs_cfg
@@ -87,6 +101,9 @@ class PolicyRunner(object):
         self._abort = False
         self._dr = np.zeros(3)                # dead-reckoned pose [x, y, yaw]
         self._t = {}                          # per-tick timing/continuity, for the tick log
+        self._last_summary = None             # filled by _summary(), used by the tick-log footer
+        self._end_note = ""
+        self.tick_log_path = None
         self._lodom = None
         if self.pose_source == "lidar":       # lidar ICP odometry (accurate forward)
             from .lidar_odom import LidarOdometry
@@ -178,6 +195,28 @@ class PolicyRunner(object):
         t_end = self.cfg.goal.timeout_s if max_time is None else max_time
         t0 = time.monotonic()
         reason, reached = "timeout", False
+
+        tk = self.live.tick
+        tlog = TickLog(self.tick_log_dir, enabled=self.tick_log_on, meta={
+            "policy": self.label,
+            "action_space": self.action_space,
+            "tick": "%.2f Hz (period %.3f s)" % (tk.rate_hz, tk.period),
+            "action_duration": "%.3f s (%.1f ticks)" % (tk.action_duration, tk.action_ticks),
+            "goal_B": "(fwd %.2f, left %.2f) tol %.2f timeout %.0fs" % (
+                self.cfg.goal.goal_dist, self.cfg.goal.goal_y,
+                self.cfg.goal.goal_tol, t_end),
+            "magnitude": self.live.magnitude,
+            "pose_source": self.pose_source,
+            "collision_abort": "%s (estop=%s, margin %.2f)" % (
+                self.live.collision_abort, self.collision_estop, self.live.collision_margin),
+            "robot": "radius %.2f m, pwm_per_mps %.0f, wz_arm %.2f, deadzone %.0f" % (
+                self.cfg.robot.robot_radius, self.cfg.robot.pwm_per_mps,
+                self.cfg.robot.wz_arm, self.cfg.robot.deadzone_pwm),
+            "limits": self._limits_str(),
+            "CAVEAT": ("model vs plant is NOT calibrated: measured ~1.58x on speed and "
+                       "~3.6x on turn radius, so PLAN and the car's actual motion diverge"),
+        })
+        self.tick_log_path = getattr(tlog, "path", None)
         if self.action_space == "velocity":
             self.act.start()
 
@@ -190,6 +229,7 @@ class PolicyRunner(object):
             last_fid = None
             n_tick = 0
             t_tick_prev = None
+            prev_gd = None
             while not self.client.is_shutdown():
                 # ---- TICK BOUNDARY: one observation frame = one tick ----------
                 t_wait0 = time.monotonic()
@@ -198,6 +238,8 @@ class PolicyRunner(object):
                 t_tick = time.monotonic()
                 if frame is None:      # no new perception frame in time
                     self.log("no new observation frame -- holding")
+                    tlog.note("HOLD  no new observation frame within %.2fs -- car stopped"
+                              % (tick.wait_ticks * period))
                     self._hold()
                     plan, pending, idx = None, None, 0
                     continue
@@ -231,6 +273,8 @@ class PolicyRunner(object):
                 if (pose is None or obs.age > self.obs_cfg.max_age_stale or
                         (page is not None and page > self.obs_cfg.max_age_stale)):
                     self.log("stale obstacles/pose -- holding")
+                    tlog.note("HOLD  stale data (obs age %.2fs, pose age %s) -- car stopped"
+                              % (obs.age, "-" if page is None else "%.2fs" % page))
                     self._hold()
                     plan, pending, idx = None, None, 0   # re-plan fresh once data returns
                     continue
@@ -238,6 +282,9 @@ class PolicyRunner(object):
                 # Safety runs on the FRESH frame, before anything decided a tick ago
                 # is allowed to reach the wheels.
                 if self._imminent_collision(obs.circles):
+                    tlog.note("SAFETY  imminent collision: nearest edge %.2fm < radius %.2f + margin %.2f"
+                              % (_nearest_base_edge(obs.circles),
+                                 self.cfg.robot.robot_radius, self.live.collision_margin))
                     if self.collision_estop:
                         self.client.estop()
                         return self._summary("collision_estop", False, goal, t0)
@@ -252,9 +299,11 @@ class PolicyRunner(object):
                 # ---- DISPATCH what last tick decided (overrides the car's current
                 # command). Nothing pending -> send nothing: the car keeps running
                 # its last command, and holds once that command expires.
+                dispatched = None
                 if pending is not None:
                     ctl, act = pending
                     pending = None
+                    dispatched = _act_rec(act, ctl)
                     if act.space == "velocity":
                         v, w = ctl
                         self.act.set_velocity(v, 0.0, w)
@@ -280,8 +329,36 @@ class PolicyRunner(object):
                 self._t["plan_s"] = time.monotonic() - t_plan0
                 self._t["replanned"] = replanned
                 self._t["work_s"] = time.monotonic() - t_tick
+
+                # ---- one tick, one line -------------------------------------
+                rec = {
+                    "tick": self._t["tick"],
+                    "t_s": t_tick - t0,
+                    "dt_s": self._t["period_s"],
+                    "frame_id": obs.frame_id,
+                    "skipped": self._t["skipped"],
+                    "pose": [float(pose[0]), float(pose[1]),
+                             float(np.degrees(pose[2]))],
+                    "gd": gd,
+                    "n_obs": len(obs.circles),
+                    "nearest": (None if not obs.circles
+                                else float(_nearest_base_edge(obs.circles))),
+                    "points_paired": obs.points is not None,
+                    "obs_age_s": obs.age,
+                    "pose_age_s": page,
+                    "dispatch": dispatched,
+                    "plan": _act_rec(act, controls[idx - 1]),
+                    "timing": {"wait_ms": 1e3 * self._t["wait_s"],
+                               "plan_ms": 1e3 * self._t["plan_s"],
+                               "work_ms": 1e3 * self._t["work_s"],
+                               "replanned": replanned},
+                }
+                rec["flags"] = self._tick_flags(rec, prev_gd)
+                prev_gd = gd
+                tlog.tick(rec)
             return self._summary(reason, reached, goal, t0)
         except BaseException as exc:                       # incl. KeyboardInterrupt
+            self._end_note = "ABORTED by %s -- hard estop" % type(exc).__name__
             self.log("ABORT (%s) -- estop" % type(exc).__name__)
             try:
                 self.client.estop()
@@ -290,6 +367,10 @@ class PolicyRunner(object):
             raise
         finally:
             self._shutdown_actuator()
+            path = tlog.close(self._last_summary,
+                              {"outcome_note": self._end_note} if self._end_note else None)
+            if path:
+                self.log("tick log: %s" % path)
 
     def _controls_of(self, act):
         """Per-step controls for the plan: act.controls (the full horizon) if the
@@ -313,6 +394,44 @@ class PolicyRunner(object):
                           "action": action, "v": v, "w": w,
                           "n_obs": len(obs.circles), "policy": self.label,
                           "traj": traj.tolist() if traj is not None else None})
+
+    def _limits_str(self):
+        """The command box, so a reader can tell a pinned command from a free one."""
+        if self.action_space == "velocity":
+            return "v [%.2f, %.2f] m/s, |w| <= %.2f rad/s" % (
+                getattr(self.cfg, "v_min", 0.0), getattr(self.cfg, "v_max", 0.0),
+                getattr(self.cfg, "w_max", 0.0))
+        return "actions %s, hop %.2f s" % (
+            list(getattr(self.cfg, "actions", ())), getattr(self.cfg, "step_duration", 0.0))
+
+    def _tick_flags(self, r, prev_gd):
+        """Name every notable condition so a 500-line file can be skimmed, not read.
+        These are exactly the failures this system actually has."""
+        f, t = [], r.get("timing") or {}
+        if r.get("skipped"):
+            f.append("SKIP")
+        if (t.get("work_ms") or 0) > 1000.0 * self.live.tick.period:
+            f.append("OVERRUN")
+        # tick 1 has nothing buffered yet by construction -- not worth flagging
+        if r.get("dispatch") is None and r.get("tick", 0) > 1:
+            f.append("NODISP")
+        if not r.get("points_paired"):
+            f.append("NOPTS")
+        d = r.get("dispatch") or {}
+        if d.get("space") == "velocity":
+            v, w = d.get("v", 0.0), d.get("w", 0.0)
+            if abs(v) < 1e-6 and abs(w) < 1e-6:
+                f.append("ZERO")           # the documented "car froze" failure
+            if abs(w) >= getattr(self.cfg, "w_max", 1e9) - 1e-6:
+                f.append("WPIN")           # cannot turn enough -> the spiral failure
+            # NOT flagging v at v_max: a goal-seeking policy sits there almost every
+            # tick, so it is noise that buries the flags that mean something.
+        if prev_gd is not None and r.get("gd") is not None and r["gd"] > prev_gd + 1e-3:
+            f.append("AWAY")
+        n = r.get("nearest")
+        if n is not None and n < self.cfg.robot.robot_radius:
+            f.append("NEAR")
+        return f or ["."]
 
     def _hold(self):
         """Stop the car NOW, whatever it is running.
@@ -338,6 +457,7 @@ class PolicyRunner(object):
                if pose is not None else None)
         s = {"policy": self.label, "reached": reached, "reason": reason,
              "time_s": round(time.monotonic() - t0, 2), "final_goal_dist": fgd}
+        self._last_summary = s
         self.log("DONE %s" % s)
         return s
 

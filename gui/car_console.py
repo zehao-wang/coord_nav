@@ -90,7 +90,7 @@ class MPCController(QObject):
 
     def start(self, policy_key, magnitude, goal_x, goal_y, pose_source,
               collision_guard, step_duration, allow_rotation, execute_steps=1,
-              tick_hz=None):
+              tick_hz=None, run_dir=None):
         # build the selected policy backend from the registry (any Policy works).
         # build_policy validates the build() signature and that the policy's
         # action_space matches the registry entry -- a mismatch would bind the
@@ -109,7 +109,8 @@ class MPCController(QObject):
             log=lambda m: self.logmsg.emit("SEND", m),
             pose_source=pose_source,
             on_step=lambda d: self.stepped.emit(d),
-            collision_estop=False)     # GUI: soft-stop on collision, don't kill car-ros
+            collision_estop=False,     # GUI: soft-stop, don't kill car-ros
+            tick_log_dir=run_dir)      # tick log lands beside the recording
         self._thread = threading.Thread(target=self._run, name="mpc-run", daemon=True)
         self._thread.start()
 
@@ -629,7 +630,8 @@ class MainWindow(QMainWindow):
                            self.odom_combo.currentData(), self.collision_cb.isChecked(),
                            self.dur_spin.value(), False,
                            int(self.exec_steps_spin.value()),
-                           tick_hz=self.hz_spin.value())
+                           tick_hz=self.hz_spin.value(),
+                           run_dir=(self._rec or {}).get("dir"))
         except Exception as exc:
             # policy build / runner construction runs synchronously here; if it
             # raises, the worker thread never starts and 'finished' never fires --

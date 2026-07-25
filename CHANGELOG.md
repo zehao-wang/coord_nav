@@ -3,6 +3,43 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.8.0 — 2026-07-25 — dedicated per-tick debug log
+
+One file per experiment, named by the experiment start time, so someone who did NOT
+write the policy can open it and see what happened on every tick without re-running.
+
+- **`mpc_baseline/ticklog.py`**: `output/<start>/tick_<start>.log` (fixed-column text,
+  for reading) plus `tick_<start>.jsonl` (same records, for plotting/grep). The GUI
+  passes its existing per-Execute directory so the tick log lands beside
+  `observation.mp4`/`run.json`; the CLIs get an equivalent directory automatically, so
+  all three entry points behave the same.
+- **Header** records what the run WAS: policy, action space, tick rate and period,
+  action duration, goal B, magnitude, pose source, safety-guard state, robot
+  constants, the command box (`v` range and `|w| <= w_max`, so a pinned command is
+  recognisable), and the model-vs-plant caveat. **Footer** gives the outcome plus tick
+  count, wall time and a count of every flag raised.
+- **One line per tick** shows the tick's structure directly: `DISPATCH` (what was SENT
+  this tick, decided one tick earlier) next to `PLAN->next` (what this observation
+  produced, to be sent next tick) — the one-tick command buffering is visible rather
+  than inferred. Plus frame_id, pose, distance to B, obstacle count and nearest edge,
+  and a timing breakdown `wA pB WC` (ms waiting for the frame / planning / total work).
+- **A `FLAGS` column names anomalies** so a 500-line file is skimmed, not read: `SKIP`
+  (frames missed), `OVERRUN` (work exceeded the tick), `HOLD` (stale data, car
+  stopped), `NODISP`, `NOPTS` (points did not pair), `ZERO` (commanded a full stop —
+  the "car froze" failure), `WPIN` (yaw pinned at the cap — cannot turn enough),
+  `AWAY` (distance to B grew), `NEAR`, `SAFETY`. Healthy ticks show `.`.
+  Validated by replaying the real spiral run recorded earlier: healthy ticks read `.`
+  and the failure onset is unmistakable from tick 9 — `WPIN AWAY` repeated to the end.
+  A `v`-at-`v_max` flag was tried and dropped: a goal-seeking policy sits there nearly
+  every tick, which buried the flags that mean something.
+- The runner is instrumented for this (`self._t`): per-tick index, wait/plan/work
+  times, actual period, frames skipped, and whether the tick re-planned or replayed a
+  cached step. Each line is flushed immediately, so an E-STOP, Ctrl-C or crash still
+  leaves a complete file — those are the runs worth reading. Logging failures are
+  swallowed: a log must never take the car down.
+
+Verified live: two runs on the car, 6 ticks, `flags (none)`, dt 0.332–0.340.
+
 ## 0.7.0 — 2026-07-25 — one global tick; command buffering; dt-invariant cost
 
 The stack had three unsynchronised clocks: perception 3 Hz, the variant-1 loop
