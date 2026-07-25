@@ -450,25 +450,41 @@ class CarClient(object):
                     pass
 
         report, ok = {}, True
-        for name in ("imu", "encoders", "battery"):
-            vals = seen[name]
-            distinct = len(set(vals))
-            alive = len(vals) > 0 and (distinct > 1 or len(vals) <= 3)
-            report[name] = {"msgs": len(vals), "distinct": distinct, "alive": alive}
-            if len(vals) == 0:
-                report[name]["problem"] = "no messages"
-                ok = False
-            elif distinct <= 1 and len(vals) > 3:
-                report[name]["problem"] = "FROZEN at a single value (%r)" % (vals[0],)
-                ok = False
+
+        # The IMU is the discriminator. It is the only MCU feed that MUST dither
+        # while the car is stationary, so a single repeated value proves the read
+        # path is stuck. Encoders legitimately hold still when the wheels do, and
+        # /battery_v is quantised and moves over minutes -- testing either for
+        # "distinct values" over a few seconds reports a healthy parked car as
+        # broken, which is what the first live run of this check did.
         gz = seen["imu"]
-        if gz:
+        report["imu"] = {"msgs": len(gz), "distinct": len(set(gz))}
+        if not gz:
+            report["imu"]["problem"] = "no /imu/data_raw"
+            ok = False
+        elif len(set(gz)) <= 1 and len(gz) > 3:
+            report["imu"]["problem"] = (
+                "FROZEN at %r -- the MCU serial READ path is wedged. Writes still "
+                "reach the motors, so the car will drive with no working feedback."
+                % (gz[0],))
+            ok = False
+        else:
             bias = sum(gz) / len(gz)
             report["gyro_still_bias"] = bias
             if abs(bias) > gyro_still_max:
-                report["gyro_problem"] = (
+                report["imu"]["problem"] = (
                     "gyro reads %.3f rad/s (%.0f deg/s) while STILL -- odom yaw will "
-                    "ramp" % (bias, math.degrees(bias)))
+                    "ramp at that rate and every heading is wrong"
+                    % (bias, math.degrees(bias)))
+                ok = False
+
+        # For the rest, only ask that they are PUBLISHING. They share the serial
+        # link with the IMU, so a wedge shows up there first and unambiguously.
+        for name in ("encoders", "battery"):
+            vals = seen[name]
+            report[name] = {"msgs": len(vals), "distinct": len(set(vals))}
+            if not vals:
+                report[name]["problem"] = "no messages"
                 ok = False
         return ok, report
 
@@ -527,13 +543,54 @@ class CarClient(object):
         self._result_cb = cb
 
     # -- estop (SSH, ROS-independent) -------------------------------------
-    def estop(self):
-        """Hard emergency stop: SSHes estop.sh on the board. Kills car-ros and
-        zeroes the motors; does not depend on ROS being healthy."""
-        subprocess.Popen(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
-             "-i", self.ssh_key, "jetson@" + self.car_ip, "sh /home/jetson/estop.sh"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def estop(self, wait=8.0):
+        """Hard emergency stop, fast path first, SSH backstop second.
+
+        Measured 2026-07-25: the SSH backstop takes **1.23 s until the first zero
+        reaches the motors** (0.85 s of that is the SSH handshake) and ~4.2 s in
+        total, because it keeps blasting zeros for 3 s afterwards. The MCU serial
+        port is exclusive -- car_base holds /dev/myserial -- so the script has to
+        stop car-ros before it can open the port at all. 1.23 s is ~0.44 m of
+        travel at 0.36 m/s.
+
+        So: blast raw-PWM zeros through /wheel_cmd FIRST (milliseconds, straight
+        down the serial link car_base already has open), then fire the SSH teardown
+        as the guaranteed backstop. /wheel_cmd bypasses the drive_action harness and
+        maps to set_motor -- the 2026-07-22 runaway that velocity commands could not
+        halt was /cmd_vel, which goes through the firmware's internal loop; raw PWM
+        stopped it.
+
+        Returns True if the SSH backstop reported success, False if it failed, and
+        None if `wait` is 0 (fire and forget). The previous version was Popen with
+        stdout AND stderr discarded, so a missing key or an unreachable car looked
+        exactly like a successful stop -- on the last line of defence.
+        """
+        for _ in range(6):                       # fast path: raw PWM, ~ms
+            try:
+                self._wheel_pub.publish(Float32MultiArray(data=[0.0, 0.0, 0.0, 0.0]))
+                self._dwheels_pub.publish(
+                    Float32MultiArray(data=[0.0, 0.0, 0.0, 0.0, 0.0]))
+            except Exception:
+                break                            # ROS may already be gone; SSH still runs
+            time.sleep(0.02)
+
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
+               "-i", self.ssh_key, "jetson@" + self.car_ip, "sh /home/jetson/estop.sh"]
+        if not wait:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return None
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               timeout=wait)
+            out = (p.stdout or b"").decode("utf-8", "replace")
+            if p.returncode != 0 or "motors are OFF" not in out:
+                print("ESTOP BACKSTOP DID NOT CONFIRM (rc=%s): %s\nPULL THE POWER."
+                      % (p.returncode, out.strip()))
+                return False
+            return True
+        except Exception as exc:
+            print("ESTOP BACKSTOP FAILED (%s) -- PULL THE POWER." % exc)
+            return False
 
     def restart_ros(self):
         """Restart car-ros on the board over SSH -- recover the stack after an

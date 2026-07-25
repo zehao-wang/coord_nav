@@ -3,6 +3,58 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.9 - 2026-07-25 - the MCU wedge recurs mid-run; estop measured and made verifiable
+
+### The wedge is not a one-off, and it happens DURING a run
+
+A verification run at magnitude 40 after a power cycle: the sensor gate PASSED at
+startup (imu dithering, gyro bias 0.0009 rad/s, odom yaw drift -0.03 deg/3 s), the
+first 18 ticks were healthy -- `real/cmd` 0.74-1.08, `gd` falling 2.500 -> 0.941,
+1.58 m travelled -- and then at t=5.88 s the car stopped dead. The remaining 44
+ticks show the pose frozen at (+1.69, +0.21) and `real/cmd x0.00` while the planner
+kept commanding v=0.361. Checked afterwards: the MCU read path was wedged again
+(imu frozen at 0.171509228, odom yaw drifting -19.6 deg / 2 s).
+
+That is twice in under an hour, both times around 10 V. **The startup gate is not
+enough -- the check has to run every tick**, and the `real/cmd` column is what
+caught it: a run of `x0.00` is "commands sent, car not moving" and nothing else.
+
+### The e-stop, measured
+
+I claimed the estop had not worked because `car-ros` was still `active` when I
+checked. **That was wrong -- I measured too early.** The path takes 5.1 s end to
+end, and I checked after ~1 s. Timed properly:
+
+    bare SSH handshake                      0.85 s
+    first zero actually reaching the motors 1.23 s   <- the number that matters
+    whole script (3 s of zero-blasting)     4.2 s
+
+The order inside `estop.sh` is forced: `/dev/myserial` is exclusive and `car_base`
+holds it, so the service must stop before the port can be opened at all.
+
+Fixed:
+- **`CarClient.estop()` blasts raw-PWM zeros on `/wheel_cmd` first** (milliseconds,
+  down the link car_base already has open) and fires the SSH teardown as the
+  backstop. `/wheel_cmd` maps to `set_motor`; the 2026-07-22 runaway that velocity
+  commands could not halt was `/cmd_vel`, which goes through the firmware's loop.
+- **It now confirms.** It was `Popen` with stdout AND stderr discarded, returning
+  None whether it succeeded, the key was missing, or the car was unreachable -- on
+  the last line of defence. It now waits (default 8 s), checks for "motors are OFF"
+  and returns True/False, printing PULL THE POWER on failure.
+- **`estop.sh` is now in the repo** (`car_ros/estop.sh`) instead of existing only
+  on the car, with a backup of the car's copy taken before deploying. Dropped its
+  probe of the retired `scan_bridge` port 9870, which always failed and cost a
+  python3 startup; 5.1 s -> 4.2 s total.
+
+### The sensor gate's first live use found a bug in the gate
+
+It failed a healthy car. Encoders and `/battery_v` were flagged FROZEN because they
+held one value for 3 s -- which a stationary car's encoders and a quantised voltage
+reading are supposed to do. The IMU is the only MCU feed that must dither when the
+car is still, and it is what actually caught the real fault. The distinct-value test
+is now IMU-only; encoders and battery are only required to be publishing. Verified
+both ways: healthy parked car PASSES, the recorded wedged signature still FAILS.
+
 ## 0.9.8 - 2026-07-25 - INCIDENT: wedged MCU read path; sensor-liveness gate added
 
 **What happened.** An attempted re-calibration produced impossible numbers -- the

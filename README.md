@@ -71,7 +71,7 @@ bash gui/run_gui.sh                  # 3) 开 GUI（用当前 $DISPLAY）
 | `calibration/` | 标定被控对象模型的工具、方法、历史记录 |
 | `gui/` | PySide6 上位机（`run_gui.sh` 启动）|
 | `obstacle_perception/` | C++ 障碍感知 ROS 包（部署到 Nano）|
-| `car_ros/` | 车端在用的源码副本（部署到 `car_base/`）|
+| `car_ros/` | 车端在用的源码副本（部署到 `car_base/`），含 **`estop.sh`**（最后一道防线）|
 | `smoke/` | 连通性 / 单轮测试 + 实车实验 `policy_run.py` |
 | `docs/` | 车端配置、排查 |
 | `output/` | GUI 每次 Execute 的录制 + tick log（gitignored）|
