@@ -14,34 +14,107 @@ import numpy as np
 from . import config as C
 from .sim import KinematicSim, run_episode, default_scenarios
 from .policies import Variant1Policy, Variant2Policy
+from .registry import POLICY_REGISTRY, build_policy
+
+_V1 = ("1", "vw", "v1")
+_V2 = ("2", "grid", "v2")
 
 
 def _cfg_for(variant, live, goal_dist):
-    if variant == 1:
+    v = str(variant).lower()
+    if v in _V1:
         cfg = C.live_config_v1() if live else C.sim_config_v1()
-    else:
+    elif v in _V2:
         cfg = C.live_config_v2() if live else C.sim_config_v2()
+    else:
+        raise ValueError(
+            "unknown variant %r -- use 1 or 2, or a key registered in "
+            "POLICY_REGISTRY (%s), which run_variant forwards to run_policy(). "
+            "This used to fall through to variant 2 and silently benchmark the "
+            "WRONG policy." % (variant, ", ".join(sorted(POLICY_REGISTRY)) or "none"))
     cfg.goal.goal_dist = goal_dist
     return cfg
 
 
+def _default_plan_dt(cfg):
+    """Control period the offline loop applies one planned step for.
+
+    A cfg carrying an `mppi` block keeps that block's dt (matching how
+    run_variant(1) has always been benchmarked). Anything else -- a custom model's
+    cfg -- gets the LIVE cadence, which is what PolicyRunner actually does on the
+    car. Those are NOT the same number: MPPIConfig.dt is 0.6 s while the live
+    runner replans at 1/LiveConfig.plan_rate = 0.25 s. Pass plan_dt explicitly to
+    compare policies at one common cadence.
+    """
+    mppi = getattr(cfg, "mppi", None)
+    if mppi is not None:
+        return mppi.dt
+    return 1.0 / C.LiveConfig.plan_rate
+
+
 def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
-                obs_cfg=None, seed=0, sense_range=3.0):
+                obs_cfg=None, seed=0, sense_range=3.0, plan_dt=None):
     """Run one variant over the scenarios (default suite). Fresh policy + sim per
-    scenario. Returns a list of EpisodeResult."""
+    scenario. Returns a list of EpisodeResult.
+
+    `variant` is 1 or 2. Any key in POLICY_REGISTRY (including your own model) is
+    forwarded to run_policy(); anything else raises instead of silently running
+    variant 2. `plan_dt` overrides the control period (see _default_plan_dt).
+    """
+    v = str(variant).lower()
+    if v not in _V1 and v not in _V2:
+        if v in POLICY_REGISTRY:
+            return run_policy(v, scenarios=scenarios, goal_dist=goal_dist,
+                              obs_cfg=obs_cfg, seed=seed, sense_range=sense_range,
+                              plan_dt=plan_dt)
+        _cfg_for(variant, live, goal_dist)        # raises with the full message
+
     scenarios = scenarios if scenarios is not None else default_scenarios(goal_dist)
     obs_cfg = obs_cfg or C.ObstacleConfig()
     cfg = _cfg_for(variant, live, goal_dist)
-    plan_dt = cfg.mppi.dt if variant == 1 else cfg.step_duration
+    is_v1 = v in _V1
+    dt = plan_dt if plan_dt is not None else (cfg.mppi.dt if is_v1 else cfg.step_duration)
 
     results = []
     for world in scenarios:
         sim = KinematicSim(world, sense_range=sense_range,
                            robot_radius=cfg.robot.robot_radius, seed=seed)
-        policy = (Variant1Policy(cfg) if variant == 1
-                  else Variant2Policy(cfg, seed=seed))
+        policy = (Variant1Policy(cfg) if is_v1 else Variant2Policy(cfg, seed=seed))
         results.append(run_episode(sim, policy, variant, obs_cfg, cfg.goal,
-                                   plan_dt=plan_dt))
+                                   plan_dt=dt, robot_cfg=cfg.robot))
+    return results
+
+
+def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
+               magnitude=40.0, obs_cfg=None, seed=0, sense_range=3.0,
+               plan_dt=None, step_duration=0.5):
+    """Run ANY registered policy -- including your own model -- over the scenarios.
+
+    Fresh policy + sim per scenario, constructed through registry.build_policy so
+    the action_space / build-signature checks apply here too. `magnitude` defaults
+    to 40 (the GUI default and the value the car was validated at; 20 cannot steer,
+    see mpc/README.md). Returns a list of EpisodeResult, so print_table / summarize
+    / to_json work on it exactly like a built-in variant.
+
+    NOTE the registry always builds a LIVE config (registry build() calls
+    config.build_live_cfg), so run_policy("mpc_vw") is the live profile while
+    run_variant(1) defaults to the SIM profile -- their numbers differ. Use
+    run_variant(1, live=True) to compare like with like.
+    """
+    scenarios = scenarios if scenarios is not None else default_scenarios(goal_dist)
+    obs_cfg = obs_cfg or C.ObstacleConfig()
+
+    results = []
+    for world in scenarios:
+        policy, cfg = build_policy(policy_key, magnitude, goal_dist, goal_y=goal_y,
+                                   step_duration=step_duration)
+        cfg.goal.goal_dist = goal_dist
+        cfg.goal.goal_y = goal_y
+        dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
+        sim = KinematicSim(world, sense_range=sense_range,
+                           robot_radius=cfg.robot.robot_radius, seed=seed)
+        results.append(run_episode(sim, policy, policy_key, obs_cfg, cfg.goal,
+                                   plan_dt=dt, robot_cfg=cfg.robot))
     return results
 
 

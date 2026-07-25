@@ -28,7 +28,7 @@ from carclient import CarClient
 # MPC baseline package (sibling mpc/ dir) -- policy execute panel.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mpc"))
 from mpc_baseline import config as mpc_config
-from mpc_baseline.registry import POLICY_REGISTRY
+from mpc_baseline.registry import POLICY_REGISTRY, build_policy
 from mpc_baseline.runner import PolicyRunner
 
 from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPointF
@@ -90,10 +90,13 @@ class MPCController(QObject):
 
     def start(self, policy_key, magnitude, goal_x, goal_y, pose_source,
               collision_guard, step_duration, allow_rotation, execute_steps=1):
-        # build the selected policy backend from the registry (any Policy works)
-        policy, cfg = POLICY_REGISTRY[policy_key]["build"](
-            magnitude, goal_x, goal_y=goal_y, step_duration=step_duration,
-            allow_rotation=allow_rotation)
+        # build the selected policy backend from the registry (any Policy works).
+        # build_policy validates the build() signature and that the policy's
+        # action_space matches the registry entry -- a mismatch would bind the
+        # wrong actuator (velocity -> /drive_wheels, discrete -> /drive_action).
+        policy, cfg = build_policy(
+            policy_key, magnitude, goal_x, goal_y=goal_y,
+            step_duration=step_duration, allow_rotation=allow_rotation)
         live = mpc_config.LiveConfig()
         live.magnitude = magnitude
         live.collision_abort = collision_guard

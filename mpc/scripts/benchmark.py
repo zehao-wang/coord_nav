@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Benchmark both variants over the simulator suite and compare them.
+"""Benchmark policies over the simulator suite and compare them.
 
-    python scripts/benchmark.py                     # table for both variants
-    python scripts/benchmark.py --json out.json     # also dump metrics
-    python scripts/benchmark.py --plots plotdir/    # per-scenario path plots
+    python scripts/benchmark.py                       # table for both variants
+    python scripts/benchmark.py --json out.json       # also dump metrics
+    python scripts/benchmark.py --plots plotdir/      # per-scenario path plots
+    python scripts/benchmark.py --policy my_model     # add YOUR registered model
+    python scripts/benchmark.py --policy my_model --no-builtins   # only yours
 
 Variant 2 (discrete grid-hop) is the default baseline the car is tested with;
-variant 1 (continuous v,omega sampling MPC) is the continuous comparison.
+variant 1 (continuous v,omega sampling MPC) is the continuous comparison. Any
+policy registered in mpc_baseline/registry.py can join the table via --policy
+(repeatable). Note the built-ins run with the SIM profile while --policy entries
+run with the LIVE profile the registry builds -- pass --live-profile to compare
+like with like.
 """
 
 import os
@@ -16,6 +22,7 @@ import argparse
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from mpc_baseline import eval as E
+from mpc_baseline.registry import POLICY_REGISTRY
 from mpc_baseline.sim import default_scenarios, goal_from_start
 
 
@@ -49,14 +56,38 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--goal-dist", type=float, default=1.0)
     ap.add_argument("--live-profile", action="store_true")
+    ap.add_argument("--policy", action="append", default=[],
+                    help="registry key to add to the table (repeatable). Choices: %s"
+                         % ", ".join(sorted(POLICY_REGISTRY)))
+    ap.add_argument("--no-builtins", action="store_true",
+                    help="skip variants 1/2, only run the --policy entries")
+    ap.add_argument("--magnitude", type=float, default=40.0,
+                    help="PWM magnitude for --policy entries (default 40)")
+    ap.add_argument("--plan-dt", type=float, default=None,
+                    help="override the control period for every policy (live: 0.25 s)")
     ap.add_argument("--json", default=None)
     ap.add_argument("--plots", default=None)
     args = ap.parse_args()
 
+    unknown = [p for p in args.policy if p not in POLICY_REGISTRY]
+    if unknown:
+        print("unknown policy %s; registered: %s"
+              % (", ".join(map(repr, unknown)), ", ".join(sorted(POLICY_REGISTRY))))
+        sys.exit(2)
+    if args.no_builtins and not args.policy:
+        print("--no-builtins needs at least one --policy")
+        sys.exit(2)
+
     scenarios = default_scenarios(args.goal_dist)
-    r2 = E.run_variant(2, scenarios, live=args.live_profile, goal_dist=args.goal_dist)
-    r1 = E.run_variant(1, scenarios, live=args.live_profile, goal_dist=args.goal_dist)
-    by = {"v2-grid": r2, "v1-vw": r1}
+    by = {}
+    if not args.no_builtins:
+        by["v2-grid"] = E.run_variant(2, scenarios, live=args.live_profile,
+                                      goal_dist=args.goal_dist, plan_dt=args.plan_dt)
+        by["v1-vw"] = E.run_variant(1, scenarios, live=args.live_profile,
+                                    goal_dist=args.goal_dist, plan_dt=args.plan_dt)
+    for key in args.policy:
+        by[key] = E.run_policy(key, scenarios, goal_dist=args.goal_dist,
+                               magnitude=args.magnitude, plan_dt=args.plan_dt)
     E.print_table(by)
     if args.json:
         E.to_json(by, args.json)

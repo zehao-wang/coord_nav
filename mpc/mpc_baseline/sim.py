@@ -89,11 +89,15 @@ def goal_from_start(start, goal_dist, goal_y=0.0):
 
 
 def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
-                max_steps=400):
-    """Drive `policy` (variant 1 or 2) closed-loop in `sim` toward goal B.
+                max_steps=400, robot_cfg=None):
+    """Drive any Policy closed-loop in `sim` toward goal B.
 
-    variant 1: apply (v, w) as a body velocity held for plan_dt each cycle.
-    variant 2: execute the chosen discrete action for its step_duration.
+    velocity policies: apply (v, w) as a body velocity held for plan_dt each cycle.
+    discrete policies: execute the chosen action for its own duration (plan_dt is
+      ignored) -- which needs a RobotConfig to turn (action, magnitude) into a body
+      velocity. Pass it as `robot_cfg`; it falls back to `policy.cfg.robot` for the
+      built-in variants. The Policy interface does NOT require a `.cfg`, so a
+      custom discrete policy should be given `robot_cfg` explicitly.
     Returns an EpisodeResult with trajectory and metrics.
     """
     field = ObstacleField(obs_cfg, sim.clock)
@@ -116,8 +120,18 @@ def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
             dt = plan_dt
             effort += (abs(act.v) + abs(act.w)) * dt
         else:
+            rc = robot_cfg
+            if rc is None:
+                rc = getattr(getattr(policy, "cfg", None), "robot", None)
+            if rc is None:
+                raise TypeError(
+                    "discrete policy %s needs a RobotConfig to convert (action, "
+                    "magnitude) into a body velocity. Pass run_episode(..., "
+                    "robot_cfg=cfg.robot) -- the Policy interface does not require a "
+                    "`.cfg` attribute, only this offline sim path needs the chassis "
+                    "model." % type(policy).__name__)
             body = np.asarray(action_body_velocity(
-                act.action_id, act.magnitude, policy.cfg.robot))
+                act.action_id, act.magnitude, rc))
             dt = act.duration
             effort += float(np.hypot(body[0], body[1]) + abs(body[2])) * dt
 

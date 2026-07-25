@@ -82,6 +82,7 @@ class MyPolicy(Policy):
 
 **② 在 `mpc_baseline/registry.py` 注册一行**。`build(magnitude, goal_x, goal_y=0.0, step_duration=0.5, allow_rotation=False)` 是 GUI/CLI 调用的固定签名，返回 `(policy, cfg)`。注册项的 `action_space` **必须和你的 `Policy.action_space` 一致**（它决定 runner 绑哪个执行器：velocity→`/drive_wheels`、discrete→`/drive_action`）：
 ```python
+from mpc_baseline.registry import register
 from mpc_baseline.policies import MyPolicy   # 或 from your_module import MyPolicy
 
 def _my_build(magnitude, goal_x, goal_y=0.0, step_duration=0.5, allow_rotation=False):
@@ -89,12 +90,30 @@ def _my_build(magnitude, goal_x, goal_y=0.0, step_duration=0.5, allow_rotation=F
     cfg = config.build_live_cfg("1", magnitude, goal_x, goal_y=goal_y)
     return MyPolicy(cfg), cfg
 
-POLICY_REGISTRY["my_model"] = {
-    "label": "My model", "action_space": "velocity", "build": _my_build,
-}
+register("my_model", "My model", "velocity", _my_build)
 ```
+`register()` 当场校验 `build` 签名和 `action_space` 取值；`build_policy()`（GUI/CLI/eval 唯一的构造入口）
+再校验**你的 `Policy.action_space` 和注册项一致**——写反了会立刻报错，而不是在实车上驱动错的话题。
 
 **③ 完事**——GUI 下拉框自动多出 "My model"，选中即用；`smoke/policy_run.py` / GUI 的录制、可视化、安全都照旧。
+**离线也能直接跑你的模型**（上车前先在这验证）：
+```bash
+python scripts/run_sim.py --policy my_model --all                # 全场景表
+python scripts/run_sim.py --policy my_model --scenario slalom --plot /tmp/m.png
+python scripts/benchmark.py --policy my_model                    # 和两个 baseline 同表对比
+python scripts/benchmark.py --policy my_model --plan-dt 0.25     # 按实车节奏比
+```
+```python
+from mpc_baseline import eval as E
+rs = E.run_policy("my_model", magnitude=40)     # -> [EpisodeResult]，可喂 print_table / to_json
+```
+> `--policy` 用 registry 建的 **live** 配置，`--variant 1|2` 用 **sim** 配置，两者数字不可直接比；
+> 要对齐加 `--live-profile`。另外 `run_variant()` 只接受 `1`/`2`/registry key，其它一律报错
+> （以前会静默跑成 variant 2，给你别人的分数）。
+
+> **discrete policy 的一个额外要求**：离线 `run_episode` 需要一个 `RobotConfig` 才能把
+> `(action_id, magnitude)` 换算成机体速度。走 `run_policy` / `--policy` 会自动带上；自己直接调
+> `run_episode` 时传 `robot_cfg=cfg.robot`。velocity policy 不需要。
 
 > 脚本里直接用也行：`PolicyRunner(MyPolicy(cfg), cfg, live, obs_cfg, client, pose_source="odom").run()`（runner 接受任何 Policy 实例，见 `runner.py`）。
 
