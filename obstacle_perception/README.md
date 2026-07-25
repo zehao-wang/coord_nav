@@ -2,6 +2,10 @@
 
 `/scan` → DBSCAN 聚类 → 外接圆 → 去冗余 → **时域滤波** → **`/obstacles`**（`[frame_id, x,y,r, ...]`，米，base 系，默认 3Hz）。~3.4ms/帧。是所有 policy 的 observation 来源。
 
+同一次 `process()` 还发 **`/obstacle_points`**（`[frame_id, x,y, x,y, ...]`，同 base 系）——**这帧圆到底是从哪些点聚出来的**，带**同一个 frame_id**。可视化端据此把点云和圆当成同一个采样来画。
+直接订 `/scan` 做不到同步：节点是按 `rate_hz` 定时器取"最新一帧 scan"，3Hz 对雷达 ~7.7Hz 意味着**约 60% 的 scan 没参与生成圆**，客户端手上最新的 `/scan` 通常不是圆的来源（实测偏差 −0.04 ~ +0.22 s）。
+只在有订阅者时才发（实测 646 点/帧 ≈ 5.0 KB/帧 → 3Hz 下 15.1 KB/s）。参数：`publish_points`（默认 true）、`points_stride`（>1 抽稀）。
+
 - 源码：`src/obstacle_circles_node.cpp`（改算法改这里）
 - 部署在小车：`~/catkin_ws/src/obstacle_perception/`，随 `car-ros`（`viz.launch` 的 `obstacle_circles` 节点）自启。
 - **时域滤波**：订阅 `/odom` 做自我运动补偿——把上一帧的圆按车的位姿增量推到当前 base 系应在的位置，再和新测量关联、对**残差**做 EMA。这样车移动/转弯时圆**不滞后**，只消掉"聚类点族每帧不同"造成的圆心/半径抖动。新障碍不延迟、消失的圆立即丢。参数 `filter_alpha`（0=关，越大越平滑，默认 0.5）、`filter_assoc`（帧间关联门限 m，默认 0.4）。

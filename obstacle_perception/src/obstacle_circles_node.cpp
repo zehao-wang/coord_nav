@@ -10,17 +10,28 @@
 // of ~80 ms.
 //
 // Outputs:
-//   /obstacles      std_msgs/Float32MultiArray, data = [x0,y0,r0, x1,y1,r1,...]
-//                   metres, base_footprint frame. x forward, y left. THIS is the
-//                   feed remote consumers read.
-//   /obstacles_viz  visualization_msgs/MarkerArray, one cylinder per circle,
-//                   for rviz (Fixed Frame = base_footprint).
+//   /obstacles        std_msgs/Float32MultiArray, data = [frame_id, x0,y0,r0, ...]
+//                     metres, base_footprint frame. x forward, y left. THIS is the
+//                     feed remote consumers read.
+//   /obstacle_points  std_msgs/Float32MultiArray, data = [frame_id, x0,y0, x1,y1, ...]
+//                     The EXACT base-frame point set this frame's circles were
+//                     clustered from, carrying the SAME frame_id, published in the
+//                     same process() call. A viewer can therefore draw points and
+//                     circles that are genuinely the same sample -- subscribing to
+//                     /scan separately cannot: the node runs on its own rate_hz
+//                     timer off the latest scan (dropping ~60% of scans at 3 Hz vs
+//                     the lidar's ~7.7 Hz), so a client's newest /scan is usually
+//                     NOT the one behind the circles it is holding. Only published
+//                     when something is subscribed (like /obstacles_viz).
+//   /obstacles_viz    visualization_msgs/MarkerArray, one cylinder per circle,
+//                     for rviz (Fixed Frame = base_footprint).
 //
 // Params (~private):
 //   scan_topic (/scan), rate_hz (3.0; <=0 => process every new scan),
 //   eps (0.20), min_samples (5), margin (0.02), max_radius (0.30),
 //   frame_id (base_footprint), lidar_yaw (pi), lidar_x (0), lidar_y (0),
-//   range_min (0), range_max (0 => use scan's own).
+//   range_min (0), range_max (0 => use scan's own),
+//   publish_points (true), points_stride (1; >1 decimates /obstacle_points).
 //
 // The lidar_* params must match the base_footprint->laser static transform in
 // viz.launch (default there: xyz 0 0 0.15, yaw pi). We do the 2D transform here
@@ -211,11 +222,16 @@ class ObstacleCirclesNode {
     pnh.param("range_min", range_min_, 0.0);
     pnh.param("range_max", range_max_, 0.0);
     pnh.param<std::string>("odom_topic", odom_topic_, "/odom");  // for ego-motion comp
+    // /obstacle_points: the clustered-from point set, same frame_id as the circles
+    pnh.param("publish_points", publish_points_, true);
+    pnh.param("points_stride", points_stride_, 1);
+    if (points_stride_ < 1) points_stride_ = 1;
 
     cyaw_ = std::cos(lidar_yaw_);
     syaw_ = std::sin(lidar_yaw_);
 
     pub_ = nh.advertise<std_msgs::Float32MultiArray>("obstacles", 5);
+    pub_pts_ = nh.advertise<std_msgs::Float32MultiArray>("obstacle_points", 5);
     pub_viz_ = nh.advertise<visualization_msgs::MarkerArray>("obstacles_viz", 5);
     sub_ = nh.subscribe(scan_topic_, 1, &ObstacleCirclesNode::onScan, this);
     sub_odom_ = nh.subscribe(odom_topic_, 5, &ObstacleCirclesNode::onOdom, this);
@@ -359,6 +375,9 @@ class ObstacleCirclesNode {
 
     ++frame_counter_;                 // this is the sample id ("frame_id")
     publish(circles, s.header.stamp);
+    // Same frame_id, same process() call, same `pts` the circles came from -- so a
+    // viewer can pair them exactly instead of guessing from its own /scan cache.
+    publishPoints(pts);
     publishViz(circles, s.header.stamp);
 
     // rolling stats so we can measure the fastest stable rate
@@ -394,6 +413,28 @@ class ObstacleCirclesNode {
     pub_.publish(m);
   }
 
+  void publishPoints(const std::vector<Pt>& pts) {
+    // data = [frame_id, x0,y0, x1,y1, ...]  -- base frame, metres, x fwd / y left.
+    // frame_id is the SAME counter /obstacles carries this cycle, so a consumer
+    // matches on it and never draws points from a different sample than the
+    // circles. Skipped when nothing subscribes (saves ~6 KB/frame over WiFi).
+    if (!publish_points_ || pub_pts_.getNumSubscribers() == 0) return;
+    std_msgs::Float32MultiArray m;
+    m.layout.data_offset = 1;            // point data begins after frame_id
+    m.layout.dim.resize(1);
+    m.layout.dim[0].label = "frame_id;xy_pairs";
+    const size_t n = (pts.size() + points_stride_ - 1) / points_stride_;
+    m.layout.dim[0].size = n;
+    m.layout.dim[0].stride = n * 2;
+    m.data.reserve(1 + n * 2);
+    m.data.push_back(static_cast<float>(frame_counter_));
+    for (size_t i = 0; i < pts.size(); i += points_stride_) {
+      m.data.push_back(pts[i].x);
+      m.data.push_back(pts[i].y);
+    }
+    pub_pts_.publish(m);
+  }
+
   void publishViz(const std::vector<Circle>& circles, const ros::Time& stamp) {
     if (pub_viz_.getNumSubscribers() == 0) return;
     visualization_msgs::MarkerArray arr;
@@ -426,7 +467,7 @@ class ObstacleCirclesNode {
   }
 
   ros::Subscriber sub_, sub_odom_;
-  ros::Publisher pub_, pub_viz_;
+  ros::Publisher pub_, pub_pts_, pub_viz_;
   ros::Timer timer_;
   sensor_msgs::LaserScan::ConstPtr last_scan_;
   ros::Time last_done_stamp_;
@@ -436,6 +477,8 @@ class ObstacleCirclesNode {
   int min_samples_;
   double lidar_yaw_, lidar_x_, lidar_y_, range_min_, range_max_;
   double cyaw_, syaw_;
+  bool publish_points_ = true;
+  int points_stride_ = 1;
 
   // temporal filter (ego-motion-compensated per-circle EMA)
   double filter_alpha_ = 0.5, filter_assoc_ = 0.4;

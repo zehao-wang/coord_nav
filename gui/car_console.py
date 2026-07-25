@@ -137,21 +137,24 @@ class ObstacleView(QWidget):
         self.connected = False
         self.goal = None                 # (bx, by) goal B in the base frame, or None
         self.path = None                 # [(bx, by), ...] MPC predicted path, base frame
-        self.points = []                 # raw /scan as base-frame [(x, y), ...]
+        self.points = []                 # /obstacle_points, base-frame [(x, y), ...]
+        self.have_points = False         # points present for THIS frame_id?
         self.show_points = False         # draw the point cloud (blue)?
         self.point_radius = 0.02         # radius to draw each point (m; GUI-set)
         self.view_range = 3.0            # metres from centre to edge
         self.setMinimumSize(320, 320)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def render_frame(self, frame_id, circles, connected):
+    def render_frame(self, frame_id, circles, connected, points=None):
+        """One SAMPLE, drawn atomically: `points` are /obstacle_points for this
+        exact frame_id (None = not available for it). We never draw points from a
+        different frame against these circles -- at 3 Hz publishing off a ~7.7 Hz
+        lidar that mismatch is visible as the cloud rotating away from the circles."""
         self.frame_id = frame_id
         self.circles = circles
         self.connected = connected
-        self.update()
-
-    def set_points(self, pts):
-        self.points = pts or []
+        self.have_points = points is not None
+        self.points = points or []
         self.update()
 
     def set_show_points(self, on):
@@ -191,7 +194,7 @@ class ObstacleView(QWidget):
             p.drawText(int(cx + 3), int(cy - rr + 13), "%.1fm" % r)
             r += 0.5
 
-        # raw /scan point cloud (blue), drawn under the obstacle circles
+        # point cloud (blue) under the circles -- same frame_id as them, or nothing
         if self.show_points and self.points:
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(70, 150, 255, 150))
@@ -250,6 +253,10 @@ class ObstacleView(QWidget):
         txt = "frame %d   obst %d   nearest %s" % (
             self.frame_id, len(self.circles),
             ("%.2fm" % nearest) if nearest is not None else "--")
+        if self.show_points:
+            # points are drawn only when they carry this frame_id, so say which
+            txt += "   pts %s" % (("%d @frame %d" % (len(self.points), self.frame_id))
+                                  if self.have_points else "-- (no /obstacle_points)")
         if not self.connected:
             txt = "! DISCONNECTED   " + txt
         p.setFont(QFont("monospace", 10))
@@ -352,8 +359,10 @@ class MainWindow(QMainWindow):
         self.link_lbl.setStyleSheet("padding:5px; font-weight:bold; background:#333; color:#ccc;")
         v.addWidget(self.link_lbl)
 
-        # point cloud: raw /scan drawn (blue) in the top-down view, radius GUI-set
-        pc = QGroupBox("Point cloud  (/scan)")
+        # point cloud: /obstacle_points drawn (blue) in the top-down view. These are
+        # the exact points the circles of the SAME frame_id were clustered from, so
+        # cloud and circles are one sample (/scan would not be -- see carclient).
+        pc = QGroupBox("Point cloud  (/obstacle_points, frame-synced)")
         pcl = QHBoxLayout(pc)
         self.pc_cb = QCheckBox("show (blue)")
         self.pc_cb.setChecked(False)
@@ -487,20 +496,20 @@ class MainWindow(QMainWindow):
 
     def _poll_tick(self):
         self._update_link()
-        obs = self.client.obstacles()
+        # ONE sample: circles + the points they were clustered from, same frame_id
+        obs = self.client.observation()
         if obs is None:
-            fid, circ, connected = 0, [], False
+            fid, circ, connected, pts = 0, [], False, None
         else:
             fid, circ, connected = obs.frame_id, obs.circles, obs.age < 1.5
+            pts = obs.points
         # report obstacle disconnect/reconnect transitions (disconnect -> ERR)
         if getattr(self, "_obs_conn", True) != connected:
             self._obs_conn = connected
             self.log("ERR" if not connected else "GET",
                      "obstacles DISCONNECTED" if not connected else "obstacles reconnected")
-        self.view.render_frame(fid, circ, connected)
-        if self.pc_cb.isChecked():        # raw /scan point cloud (blue), when enabled
-            sp = self.client.scan_points()
-            self.view.set_points(sp.pts if sp else [])
+        self.view.render_frame(fid, circ, connected,
+                               points=pts if self.pc_cb.isChecked() else None)
         self._rec_grab(fid)               # capture one video frame per new observation
         # circles are [x,y,r] in metres, base frame
         near = nearest_edge(circ)

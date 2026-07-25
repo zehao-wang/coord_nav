@@ -73,6 +73,8 @@ while not car.is_shutdown():            # 典型模型循环
 ```
 
 - `car.obstacles()` → `Obstacles(frame_id, circles, age)`；`circles` 每个 `(x, y, r)` 米、base 系（x 前 y 左）。非阻塞、线程安全缓存。
+- `car.observation()` → `Frame(frame_id, circles, points, age)` —— **一个采样**：`circles` 和 `points` 保证是同一个 `frame_id`（车上同一次处理、同一帧 scan）。**画图用这个**。`points` 为 `None` 表示这帧还没配上点（不会拿别帧的点顶替）。
+- `car.scan_points()` → 原始 `/scan` 转 base 系的点，**和圆不同步**（车端按 `rate_hz` 定时取最新 scan，约 60% 的 scan 没参与生成圆）。只在你要原始雷达数据时用。
 - `car.drive(action, magnitude=None, duration=None)` → 幅值/时长省略用默认（40 / 0.5s）。
 - `car.on_result(cb)` / `car.last_result()` → 每步完成回报 `{"action","reason","took_ms",...}`。
 - `car.stop()` 软停；`car.estop()` 硬急停（SSH 跑 estop.sh，杀 car-ros）；`car.connected()` 判活。
@@ -119,6 +121,7 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 | 话题 | 类型 | 说明 |
 |---|---|---|
 | `/obstacles` | `std_msgs/Float32MultiArray` | **碰撞球**：`[frame_id, x,y,r, ...]`，米，base 系。远程主要读这个 |
+| `/obstacle_points` | `std_msgs/Float32MultiArray` | **这帧圆的来源点**：`[frame_id, x,y, x,y, ...]`，同 base 系、**同 frame_id**。可视化用它才能点云与圆同源（直接订 `/scan` 不同步，见下）。有订阅者才发 |
 | `/drive_action` | `std_msgs/Float32MultiArray` | **发离散动作**：`[action_id, magnitude, duration_s]` |
 | `/drive_result` | `std_msgs/String` | 每步完成回报（JSON）|
 | `/battery_v` | `std_msgs/Float32` | MCU 电压（链路健康信号；`/battery` 跨版本不兼容故转发）|

@@ -66,6 +66,15 @@
          match distance between frames, m). Uses /odom for ego-motion. -->
     <param name="filter_alpha" value="0.5"/>
     <param name="filter_assoc" value="0.4"/>
+
+    <!-- /obstacle_points: the exact base-frame points this frame's circles were
+         clustered from, tagged with the SAME frame_id, so a viewer can draw the
+         point cloud and the circles as one sample. Subscribing to /scan instead
+         cannot be synchronised: this node runs on its own rate_hz timer off the
+         latest scan, so it uses only ~1 in 2-3 of the lidar's ~7.7 Hz scans.
+         Only published while something subscribes. points_stride > 1 decimates. -->
+    <param name="publish_points" value="true"/>
+    <param name="points_stride"  value="1"/>
     <param name="lidar_yaw"   value="$(arg lidar_yaw)"/>
     <param name="lidar_x"     value="$(arg lidar_x)"/>
     <param name="lidar_y"     value="$(arg lidar_y)"/>

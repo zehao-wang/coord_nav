@@ -3,6 +3,47 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.6.2 — 2026-07-25 — point cloud is now frame-synced with the obstacle circles
+
+The GUI drew the point cloud from `/scan` and the circles from `/obstacles`, two
+independently cached topics with nothing pairing them. They were never the same
+sample, on three counts:
+
+1. `obstacle_circles_node` runs on its own `rate_hz` timer off the *latest* scan,
+   so at 3 Hz against the lidar's ~7.7 Hz roughly 60 % of scans never produce
+   circles — the client's newest `/scan` is usually not the one behind the
+   circles it holds.
+2. Each cache ages independently: measured skew between the circles' own source
+   points and the client's freshest `/scan` was −0.041 s to +0.221 s over four
+   consecutive samples. At 0.2 m/s and ~0.7 rad/s that is centimetres of shift
+   and ~10° of rotation of the whole cloud against the circles.
+3. The circles are not even a single scan: `temporalFilter` EMAs each circle
+   across frames (`filter_alpha=0.5`) with ego-motion compensation.
+
+Fix — publish the points the circles actually came from, tagged with the same id:
+
+- **New topic `/obstacle_points`** (`std_msgs/Float32MultiArray`,
+  `[frame_id, x,y, x,y, ...]`, base frame): the exact post-range-filter point set
+  `process()` clustered this cycle, published in the same call with the same
+  `frame_counter_` as `/obstacles`. Subscriber-gated like `/obstacles_viz`, so it
+  costs nothing when unused. Params `publish_points` (true), `points_stride` (1).
+  Measured on the car: 646 pts/frame = 5.0 KB/frame = 15.1 KB/s at 3 Hz.
+- **`carclient.observation()` → `Frame(frame_id, circles, points, age)`**: circles
+  and points guaranteed to share a frame_id. `points` is None when that frame has
+  no points yet — it is never back-filled with another frame's points, which is
+  the whole point. Points are kept in a small frame_id-keyed cache (POINT_FRAMES=4)
+  because ROS gives no cross-topic ordering guarantee. `scan_points()` (raw
+  `/scan`, unsynchronised) stays for callers that want raw lidar.
+- **GUI** draws the pair atomically via `render_frame(..., points=...)` and shows
+  `pts N @frame N` in the overlay, or `-- (no /obstacle_points)` — so a missing
+  pair is visible instead of silently drawing a stale cloud. Previously `sp.age`
+  was never checked at all, so a wedged lidar would have left the last cloud on
+  screen indefinitely.
+
+Verified on the car after `deploy_to_car.sh`: 12/12 consecutive `observation()`
+samples paired (frames 118–129, ~73 circles / ~645 points each), and an offscreen
+render shows every point cluster sitting inside its own circle.
+
 ## 0.6.1 — 2026-07-25 — docs: install command was broken; stale/wrong doc claims fixed
 
 Documentation-only pass (no behaviour change). Every item below was reproduced.
