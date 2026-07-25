@@ -1,9 +1,9 @@
 """Tunable parameters for the MPC baseline, as plain dataclasses.
 
 Everything the planner, simulator and live runner need is here so a run is fully
-described by one config object. Two factory helpers give sensible starting
-points: `sim_config()` (nominal speeds, for offline development) and
-`live_config()` (deliberately slow, magnitude ~20, for the real car).
+described by one config object. Per-variant factory helpers give sensible
+starting points: `sim_config_v1/_v2()` (nominal speeds, for offline development)
+and `live_config_v1/_v2()` (conservative, magnitude 30, for the real car).
 
 Frames & units throughout the package:
   * Planning happens in the ODOM frame: state = [x, y, theta], metres/radians,
@@ -33,7 +33,8 @@ class RobotConfig:
     +-0.003 m/s):
 
         9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194
-        10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- shipped
+        10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- shipped k/offset
+                (wz_arm/steer_arm ship at 0.196, the midpoint of the two arms)
 
     Voltage sensitivity is therefore SMALL for the slope (1.8 %) and for the arm
     (2 %), and larger for the friction threshold (17 -> 14 PWM: more torque is
@@ -41,8 +42,9 @@ class RobotConfig:
     measuring both axes at the SAME voltage cancels the voltage out -- that is the
     number to trust, and it is why the two runs agree on it.
 
-    Once the offset is accounted for the arm is a CONSTANT (0.216/0.196/0.184
-    across PWM); under the old proportional model it "drifted" 0.168 -> 0.095, i.e.
+    Once the offset is accounted for the arm nearly stops drifting with PWM
+    (0.216/0.196/0.184 at PWM 30/40/60, -15 % end to end, mean 0.198); under the
+    old proportional model it slid 0.168 -> 0.095, a -43 % drift, i.e.
     a friction offset was masquerading as wrong geometry. See mpc/README.md.
     """
     robot_radius: float = 0.13        # half-footprint of the mecanum car (m)
@@ -78,7 +80,8 @@ class MPPIConfig:
                                       # In SECONDS, not per-step, so a sampled manoeuvre stays
                                       # the same MANOEUVRE if the tick rate changes (a per-step
                                       # beta silently halves the smoothing horizon when dt does).
-                                      # 0.8425 s == the shipped beta=0.7 at the default tick.
+                                      # 0.8425 s == beta 0.673 at the default 1/3 s tick (the
+                                      # per-step beta it replaced was 0.7).
                                       # Larger = longer sustained turns.
     n_iters: int = 3                  # sample -> argmin -> resample refinement passes / cycle
 
@@ -134,8 +137,8 @@ class Variant1Config:
     v_min: float = 0.0                # m/s -- no reverse/stop: keep moving to B
     v_max: float = 0.22               # m/s forward cap for OFFLINE work; the live factories
                                       # derive it from the magnitude via the affine plant
-                                      # ((PWM-offset)/k), e.g. mag 40 -> 0.313 m/s
-    w_max: float = 1.2                # yaw-rate cap => min turn radius v/w_max ~0.26 m at mag 40.
+                                      # ((PWM-offset)/k), e.g. mag 40 -> 0.361 m/s
+    w_max: float = 1.2                # yaw-rate cap => min turn radius v/w_max ~0.30 m at mag 40.
                                       # Only a
                                       # CAP; the cost keeps turns gentle unless an obstacle needs
                                       # the sharper turn. Inner wheel still rolls forward at it.
@@ -225,7 +228,17 @@ class LiveConfig:
     tick: TickConfig = field(default_factory=TickConfig)
     execute_steps: int = 1            # planned steps to apply before re-planning (1 = tight
                                       # closed loop; >1 = N steps open-loop). Safety runs each step
-    magnitude: float = 20.0           # START SMALL on the real car
+    magnitude: float = 30.0           # PWM. Conservative but ACTUALLY FUNCTIONAL under the
+                                      # calibrated plant: v_max (30-14)/72.1 = 0.222 m/s, yaw up
+                                      # to 0.863 rad/s, turn radius 0.26 m.
+                                      # Was 20 ("start small"), chosen when the old proportional
+                                      # model claimed 20 -> 0.10 m/s. Measured, 20 gives 0.083 m/s
+                                      # and only 0.176 rad/s of yaw (radius 0.47 m) -- barely above
+                                      # the magnitude-17.4 floor where yaw becomes exactly zero --
+                                      # and scores 0.333 on the tight suite over 20 seeds against
+                                      # 0.992 at 30 and 0.975 at 40. Failures at 20 are timeouts,
+                                      # not collisions: the car is simply too slow to steer.
+                                      # 40 is the value the five 5 m on-car runs used.
     estop_on_link_loss: bool = True   # estop (not soft stop) if MCU link drops
     link_wait_s: float = 3.0          # refuse to drive if the MCU link isn't healthy within this
     collision_abort: bool = True      # stop if an obstacle surface reaches the footprint
@@ -251,9 +264,9 @@ def sim_config_v2() -> Variant2Config:
 
 
 def live_config_v1() -> Variant1Config:
-    """Slow, conservative variant-1 profile for the real car (magnitude ~20)."""
+    """Conservative variant-1 profile for the real car (LiveConfig.magnitude)."""
     c = Variant1Config()
-    # magnitude 20 -> PWM 20 -> ~0.10 m/s ceiling; keep yaw gentle too.
+    # magnitude 30 -> PWM 30 -> ~0.22 m/s ceiling; keep yaw gentle too.
     c.v_max = _v_of_pwm(LiveConfig.magnitude, c.robot)
     c.v_min = 0.0
     c.robot.wz_arm = c.steer_arm      # actuation mix arm == steer constraint arm
@@ -262,7 +275,7 @@ def live_config_v1() -> Variant1Config:
 
 
 def live_config_v2() -> Variant2Config:
-    """Slow, conservative variant-2 profile for the real car (magnitude 20)."""
+    """Conservative variant-2 profile for the real car (LiveConfig.magnitude)."""
     c = Variant2Config()
     c.step_magnitude = LiveConfig.magnitude
     return c
@@ -287,7 +300,7 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
             c.robot.pwm_offset = pwm_offset
         # magnitude is the PWM ceiling, so the speed ceiling is the affine inverse
         # of it -- NOT magnitude/pwm_per_mps, which ignores the friction offset and
-        # over-states v_max by pwm_offset/pwm_per_mps (0.23 m/s at these constants).
+        # over-states v_max by pwm_offset/pwm_per_mps (0.19 m/s at these constants).
         c.v_max = _v_of_pwm(magnitude, c.robot)
         c.robot.wheel_pwm_cap = max(c.robot.wheel_pwm_cap, magnitude * 1.8)
     elif v in ("2", "grid", "v2", "discrete"):

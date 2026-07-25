@@ -1,6 +1,6 @@
 # coord_nav — Coord_Nav 项目的中间件
 
-小车是一块 **Jetson Nano**（Ubuntu 18.04 / ROS **Melodic**），跑 roscore + 感知/控制,**所有计算在车上**。这台 **workstation**（Ubuntu 22.04 / ROS **Noetic**,conda 环境 `ros1`）是纯 ROS 客户端。
+小车是一块 **Jetson Nano**（Ubuntu 18.04 / ROS **Melodic**），跑 roscore + 感知/控制,**感知与底层控制都在车上算**。这台 **workstation**（Ubuntu 22.04 / ROS **Noetic**,conda 环境 `ros1`）是纯 ROS 客户端。
 
 ```
   Workstation 10.42.0.1 ──WiFi coord_nav──> Car 10.42.0.187 (jetson-desktop)
@@ -81,5 +81,5 @@ bash gui/run_gui.sh                  # 3) 开 GUI（用当前 $DISPLAY）
 ## 三件必须知道的事
 
 1. **MCU 对电机没有超时。** 丢一条"停止"就可能锁存前进跑飞,ROS 层停不住 —— 只有 `estop.sh` 能停。所有驱动路径都带车端保活 + 到时刹车,**空格键 = E-STOP**。细节见 [`docs/car-setup.md`](docs/car-setup.md)。
-2. **电机有 ~14 PWM 的静摩擦阈值。** `mag 20` 只比它高 6,车几乎不动;实用值 **40**。见 [`calibration/`](calibration/README.md)。
+2. **电机有 ~14 PWM 的静摩擦阈值,17.4 以下完全不能转向。** 默认 `magnitude` 是 **30**(v_max 0.22 m/s、转弯半径 0.26 m);20 只有 0.33 的成功率。见 [`calibration/`](calibration/README.md)。
 3. **全局只有一个频率**:`TickConfig.rate_hz = 3.0`,等于车端感知率。一帧观测 = 一个 tick,规划、执行、GUI 渲染全部跟着它走。

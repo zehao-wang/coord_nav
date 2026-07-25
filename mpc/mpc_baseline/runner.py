@@ -374,7 +374,7 @@ class PolicyRunner(object):
                 # from where it is now: the command dispatched above runs for this
                 # whole tick, so by the time this plan reaches the wheels the car has
                 # already moved 0.12 m and turned up to 23 deg at the live caps.
-                # Ignoring that dead time cost 3 collisions and 10 outcome flips in
+                # Ignoring that dead time cost 1 collision and 10 outcome flips in
                 # 120 offline episodes; advancing the start state recovers all of them.
                 t_plan0 = time.monotonic()
                 replanned = plan is None or idx >= min(n_exec, len(plan[0]))

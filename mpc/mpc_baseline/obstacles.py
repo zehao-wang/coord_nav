@@ -89,8 +89,8 @@ class ObstacleField(object):
 
     def raw_min_distance(self, point):
         """Distance (m) from a single point to the nearest RAW circle edge
-        (no robot inflation). Used for the collision/clearance metrics and the
-        live hard-abort guard. +inf if no obstacles."""
+        (no robot inflation). Feeds the tick log's `dmem` column -- how close the
+        car is to the obstacles the POLICY remembers. +inf if no obstacles."""
         c = self.circles()
         if len(c) == 0:
             return np.inf

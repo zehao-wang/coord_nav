@@ -68,7 +68,7 @@ class DriveActionNode(object):
         self.result_pub = rospy.Publisher("drive_result", String, queue_size=10)
         rospy.Subscriber("drive_action", Float32MultiArray, self.on_action, queue_size=10)
         # Continuous-velocity path for the variant-1 (v,omega) MPC: the workstation
-        # sends one [FL,RL,FR,RR,duration] PULSE per plan cycle (~4 Hz); the CAR then
+        # sends one [FL,RL,FR,RR,duration] PULSE per plan cycle (~3 Hz); the CAR then
         # locally 20 Hz keep-alives + brakes it, so lossy WiFi can't burst set_motor
         # and wedge the serial. Reuses the timed-pulse/brake machinery below.
         rospy.Subscriber("drive_wheels", Float32MultiArray, self.on_wheels, queue_size=10)

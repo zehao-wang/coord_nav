@@ -12,9 +12,9 @@ variant 1 (continuous v,omega sampling MPC) is the continuous comparison. Any
 policy registered in mpc_baseline/registry.py can join the table via --policy
 (repeatable). NOTE the built-ins and --policy entries are NOT directly comparable:
 --variant uses the sim profile, and even with --live-profile it takes magnitude from
-LiveConfig.magnitude (20 -> v_max 0.10) while --policy builds through the registry at
---magnitude (default 40 -> v_max 0.20), a 2.00x speed difference. Match them with
---live-profile --magnitude 20.
+LiveConfig.magnitude (30 -> v_max 0.222) while --policy builds through the registry
+at --magnitude (default 40 -> v_max 0.361), a 1.63x speed difference. Match them
+with --live-profile --magnitude 30.
 """
 
 import os

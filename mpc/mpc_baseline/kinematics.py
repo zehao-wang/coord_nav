@@ -14,7 +14,8 @@ Standard mecanum mixing (x fwd, y left, diagonal-paired rollers):
     RL = vx + vy - wz*arm
     FR = vx + vy + wz*arm
     RR = vx - vy + wz*arm
-This is the classic form; car_base uses the identical mix (its WZ_ARM == arm).
+This is the classic form; car_base's /cmd_vel mix has the identical form, but its
+own WZ_ARM is 0.5, not ours -- the MPC only sends /drive_wheels and /drive_action.
 """
 
 import numpy as np
@@ -64,15 +65,15 @@ def pwm_of_mps(mps, robot):
         pwm = v * pwm_per_mps + pwm_offset * sign(v)
 
     The motors do not start until PWM passes a friction threshold, so the plant is
-    affine, not proportional: measured on the car, v = (PWM - 17.0) / 73.4 with
-    residuals of +-0.003 m/s over PWM 30/40/60 (see calibration/calib_model.py). Adding
+    affine, not proportional: measured on the car, v = (PWM - 14.0) / 72.1 with
+    residuals of +-0.001 m/s over PWM 30/40/60 (see calibration/calib_model.py). Adding
     the offset back is the exact inverse, so the realised wheel speed equals the
     commanded one.
 
     This replaced a per-wheel clamp that bumped any small command UP to a fixed
     deadzone value. That destroyed steering: it moved each wheel by a DIFFERENT
     amount, so the left/right difference -- which is the entire steering signal --
-    was flattened. At magnitude 20 a commanded |w| <= 0.45 rad/s came out as
+    was flattened. At magnitude 20 a commanded |w| <= 0.70 rad/s came out as
     literally 0 rad/s, because all four wheels were clamped to the same 30 PWM.
     Adding one constant to every wheel leaves the differences untouched.
     """

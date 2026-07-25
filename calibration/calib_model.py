@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Calibrate the planner's PLANT MODEL against the real car.
 
-The planner assumes `RobotConfig.pwm_per_mps` converts PWM to m/s and that a
-commanded yaw rate `w` is actually achieved (it mixes with `wz_arm`, which the
-variant-1 config sets equal to `Variant1Config.steer_arm`). Both were nominal
-guesses. An audit of logged runs put the real values far off -- roughly 1.58x on
+The planner maps PWM to m/s through the AFFINE plant, (PWM - `pwm_offset`) /
+`RobotConfig.pwm_per_mps`, and assumes a commanded yaw rate `w` is actually
+achieved (it mixes with `wz_arm`, which the variant-1 config sets equal to
+`Variant1Config.steer_arm`). Both constants started as nominal guesses. An audit of logged runs put the real values far off -- roughly 1.58x on
 speed and ~3.6x on turn radius -- and on the car that shows up as variant 1
 commanding max yaw for tick after tick and spiralling instead of turning.
 
@@ -100,7 +100,9 @@ def _front_clear(car):
 
 # --- tests ---------------------------------------------------------------
 def test_linear(car, mags, secs):
-    """Pure forward at a known PWM -> m/s. Gives pwm_per_mps."""
+    """Pure forward at a known PWM -> m/s. Reports PWM/v per magnitude, which is
+    pwm_per_mps only under the OLD proportional model; the shipped plant is AFFINE
+    ((PWM - pwm_offset)/pwm_per_mps), so fit the slope across the magnitudes."""
     print("\n=== LINEAR: commanded PWM -> actual m/s (pwm_per_mps) ===")
     need = 0.35 + secs * max(mags) / 120.0
     clear = _front_clear(car)
@@ -144,7 +146,8 @@ def test_yaw(car, mags, secs):
 
 def test_arc(car, mag, secs, cfg):
     """The regime the controller actually uses: v>0 with a yaw command, pushed
-    through velocity_to_wheel_pwm so the deadzone bump and PWM cap are included."""
+    through velocity_to_wheel_pwm so the yaw feedforward, the affine friction offset
+    and the PWM cap are included."""
     print("\n=== ARC: end-to-end commanded (v,w) -> actual, deadzone included ===")
     clear = _front_clear(car)
     print("  front clearance %.2f m" % clear)

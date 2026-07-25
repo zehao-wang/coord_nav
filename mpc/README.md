@@ -28,13 +28,13 @@ python scripts/benchmark.py --json /tmp/bench.json                            # 
 | | 成功 | 碰撞 |
 |---|---|---|
 | 变种2 `mpc_grid` | 0.833 | 0.000 |
-| 变种1 `mpc_vw`（内置**紧**场景） | **0.983** | **0.000** |
+| 变种1 `mpc_vw`（内置**紧**场景） | **0.992** | **0.008** |
 | 变种1 `mpc_vw`（**真实**场景 B=3m、障碍 1.2–1.5m） | **1.000** | 0.000 |
 
 > **别只看 seed 0。** 单 seed 会给出 5/6 这种数字,而 120 局的真实值完全不同 —— 这个坑我们踩过。
 >
 > 变种1 在内置紧场景（障碍 0.5m、B=1m）失败**不是退化**：那些场景要求的转弯半径超出车的物理能力。
-> 把 `steer_arm` 改回标定前的虚构值 0.10 就能复现旧的 0.750,说明旧数字是仿真在给它做真车做不到的急转。
+> 把 `steer_arm` 改回标定前的虚构值 0.10 现在只降到 0.950,已不复现旧的 0.750(那是 0.9.4 软墙修复前的数字)。
 > 在实际驱动的场景里标定后是 1.000 / 0 碰撞。
 >
 > ⚠️ 仿真的"真值"仍然是 planner 自己用的积分器（`rollout_body`），**无噪声、无延迟**
@@ -51,7 +51,7 @@ bash gui/run_gui.sh          # 连车的 master，用当前 $DISPLAY（先按顶
 ```bash
 roscar
 python ../smoke/policy_run.py --variant 1 --bx 3 --by 0 --pose odom --mag 40   # 跑一次+存图+陀螺校验
-python scripts/run_live.py --variant 2 --magnitude 20                          # 变种2 baseline
+python scripts/run_live.py --variant 2 --magnitude 30                          # 变种2 baseline
 ```
 
 ---
@@ -105,7 +105,7 @@ register("my_model", "My model", "velocity", _my_build)
 python scripts/run_sim.py --policy my_model --all                # 全场景表
 python scripts/run_sim.py --policy my_model --scenario slalom --plot /tmp/m.png
 python scripts/benchmark.py --policy my_model                    # 和两个 baseline 同表对比
-python scripts/benchmark.py --policy my_model --plan-dt 0.25     # 按实车节奏比
+python scripts/benchmark.py --policy my_model --plan-dt 0.333    # 按实车节奏比
 ```
 ```python
 from mpc_baseline import eval as E
@@ -137,7 +137,7 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | `TickConfig.rate_hz` | 3.0 | **全局唯一频率**，必须等于车端感知率（`viz.launch` 的 `obstacle_circles rate_hz`）|
 | `TickConfig.action_ticks` | 1.5 | 一条指令在车上的存活时长（tick 数）。>1 使单次丢包不抖动，<2 使连丢两次后刹车 |
 | `GoalConfig.goal_dist / goal_y` | 1.0 / 0.0 | B 相对起点：前 x、左 y（米）；GUI/实验默认用 3.0 |
-| `LiveConfig.magnitude` | 20 | 实车 PWM 幅值。**摩擦阈值 14 PWM**，所以 mag 20 只有 v_max≈0.08 m/s（几乎不动）；**实用值 40**（≈0.36 m/s），GUI 默认也是 40 |
+| `LiveConfig.magnitude` | **30** | 实车 PWM 幅值 → v_max 0.222 m/s、可用偏航 0.863 rad/s、转弯半径 0.26 m。**摩擦阈值 14 PWM**，**17.4 以下偏航恒为 0**（`build_live_cfg` 会拒绝）。紧场景 20 seeds 成功率：mag 20 → **0.333**（全是超时，太慢转不动）／30 → **0.992**／40 → 0.975。实车五次 5m 跑用的是 40 |
 | `LiveConfig.collision_abort` | True | 逼近碰撞软停。**GUI 现在默认开**——曾默认关，结果一次实车跑把 130mm footprint 的 126mm 开进了障碍圆里 1 秒。软停不杀 car-ros |
 | `RobotConfig.pwm_per_mps / pwm_offset` | 72.1 / 14.0 | **实测**仿射被控对象 `轮速=(PWM−14)/72.1`。见下面的标定小节 |
 | `RobotConfig.wz_arm`, `Variant1Config.steer_arm` | 0.196 | **实测**偏航臂（米），使指令 w == 实际偏航率 |

@@ -8,18 +8,18 @@ goes to a sibling .jsonl for plotting/greping. The FLAGS column is the thing to
 skim: a healthy tick shows `.`, anything else is a named anomaly, so a 500-line
 file reveals its problem without reading it.
 
-    tick   t      dt     frame        pose                gd     obs        DISPATCH        PLAN->next      timing      FLAGS
-    0007   2.17   0.334  1183         +0.31 +0.02  -12.4  0.291  76 n0.84   vel v0.200 w+0.39  v0.200 w+0.31  w6 p7 W23  .
-    0008   2.50   0.327  1184         +0.38 +0.01  -21.7  0.214  76 n0.79   vel v0.200 w-0.67  v0.110 w-0.99  w5 p7 W21  .
-    0009   2.84   0.340  1185         +0.44 -0.03  -35.1  0.190  77 n0.71   vel v0.110 w-0.99  v0.200 w-1.20  w6 p8 W22  WPIN
-    0010   3.23   0.390  1186         +0.47 -0.09  -51.9  0.204  74 n0.66   vel v0.200 w-1.20  v0.106 w-0.96  w6 p9 W24  WPIN AWAY
+    tick   t      dt     frame     pose(fwd   left  yaw)   gd     obs/mem      DISPATCH             PLAN->next           real/cmd     timing        FLAGS
+    0007   2.17   0.334  1183      +0.31  +0.02  -12.4  0.291  76 n0.84 m0.79 vel v0.200 w+0.39    vel v0.200 w+0.31    x1.02 w0.98  w6   p7   W23  .
+    0008   2.50   0.327  1184      +0.38  +0.01  -21.7  0.214  76 n0.79 m0.75 vel v0.200 w-0.67    vel v0.110 w-0.99    x0.99 w1.01  w5   p7   W21  .
+    0009   2.84   0.340  1185      +0.44  -0.03  -35.1  0.190  77 n0.71 m0.68 vel v0.110 w-0.99    vel v0.200 w-1.20    x1.03 w0.96  w6   p8   W22  WPIN
+    0010   3.23   0.390  1186      +0.47  -0.09  -51.9  0.204  74 n0.66 m0.61 vel v0.200 w-1.20    vel v0.106 w-0.96    x0.97 w1.00  w6   p9   W24  WPIN AWAY
 
 Flags (see FLAGS below for the full list): WPIN = yaw command pinned at the cap,
 AWAY = distance to B grew, ZERO = commanded a full stop, SKIP = perception frames
-were missed, OVERRUN = the tick's work did not fit in the tick, HOLD = stale data,
+were missed, OVERRUN = the tick's work did not fit in the tick, STALE = stale data,
 NODISP = nothing was dispatched, NOPTS = /obstacle_points did not pair this frame.
 
-Written from the control loop at 3 Hz. Formatting a line costs ~30 us against a
+Written from the control loop at 3 Hz. Formatting a line costs ~4 us against a
 333 ms tick, and each line is flushed immediately so an E-STOP, a KeyboardInterrupt
 or a crash still leaves a complete file -- those are exactly the runs worth reading.
 """
@@ -95,14 +95,13 @@ class TickLog(object):
         w("# FLAGS   . = nothing notable\n")
         w("#   SKIP    perception frames were missed between this tick and the last\n")
         w("#   OVERRUN in-tick work exceeded the tick period (the next tick catches up)\n")
-        w("#   HOLD    obstacles/pose too stale to act on: the car was stopped\n")
         w("#   NODISP  nothing was dispatched (buffer empty; car keeps its last command)\n")
         w("#   NOPTS   /obstacle_points did not pair with this frame_id\n")
         w("#   ZERO    commanded a full stop while not at B (the 'car froze' failure)\n")
-        w("#   WPIN    yaw command pinned at +-w_max (usually means it cannot turn enough)\n")
+        w("#   WPIN    yaw pinned at the |w| available at this speed (cannot turn enough)\n")
         w("#   AWAY    distance to B grew vs the previous tick\n")
-        w("#   NEAR    an obstacle edge is within one robot radius of the footprint\n")
-        w("#   SAFETY  a safety interlock fired (see the line text)\n")
+        w("#   NEAR    an obstacle edge is within robot_radius of the car CENTRE\n")
+        w("#   SAFETY  not a flag: a free-text note line when an interlock fired\n")
         w("#   NOFRAME no observation frame arrived in time (the car was stopped)\n")
         w("#   STALE / COLLIDE / LINKLOST / ABORT / TIMEOUT / REACHED: the tick took that\n")
         w("#            branch and ended there. EVERY tick emits exactly one line, so a\n")

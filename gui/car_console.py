@@ -352,7 +352,10 @@ class MainWindow(QMainWindow):
         self.hz_spin = self._spin(0.5, 10.0, 0.5, mpc_config.TickConfig.rate_hz)
         # floor 20: below ~17.4 the planner's achievable yaw is 0 (build_live_cfg
         # raises), and 40 is the validated value.
-        self.mag_spin = self._spin(20.0, 80.0, 5.0, 40.0)   # base magnitude (cap 80)
+        # floor 20 (below ~17.4 the planner's achievable yaw is 0 and build_live_cfg
+        # raises); default 30 = LiveConfig.magnitude, the best-scoring conservative
+        # value. 40 also works and is what the five 5 m on-car runs used.
+        self.mag_spin = self._spin(20.0, 80.0, 5.0, mpc_config.LiveConfig.magnitude)
         self.dur_spin = self._spin(0.1, 3.0, 0.1, 0.5)      # step move = exact run time, no compensation
         self.diag_spin = self._spin(1.0, 4.0, 0.1, 1.6)     # diagonal magnitude multiplier
         self.strafe_spin = self._spin(1.0, 4.0, 0.1, 1.2)   # strafe magnitude multiplier
@@ -431,8 +434,8 @@ class MainWindow(QMainWindow):
         for label, val in POSE_SOURCES:                        # default = motor odom
             self.odom_combo.addItem(label, val)
         self.collision_cb = QCheckBox("collision guard (soft-stop)")
-        # OFF by default: obstacle circles already carry margin + planner inflates, so the
-        # guard is redundant and false-trips mid-go-around. E-STOP (spacebar) is the backstop.
+        # It USED to be OFF: obstacle circles already carry margin + planner inflates, so
+        # the guard looked redundant and false-tripped mid-go-around. E-STOP is the backstop.
         # ON by default. It was off, and run output/2026-07-25_20-01-44 drove 126 mm
         # of the 130 mm footprint into an obstacle at v_max for three ticks (1 s)
         # with nothing intervening -- the guard would have fired on all three.

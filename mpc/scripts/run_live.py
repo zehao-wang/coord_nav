@@ -3,13 +3,13 @@
 
 Run inside the car ROS env:  `roscar` first, then e.g.
 
-    python scripts/run_live.py                      # variant 2, mag 20, B = 1.0 m ahead
+    python scripts/run_live.py                      # variant 2, mag 30, B = 1.0 m ahead
     python scripts/run_live.py --variant 1          # continuous v,omega
-    python scripts/run_live.py --goal-dist 1.2 --magnitude 25
+    python scripts/run_live.py --goal-dist 1.2 --magnitude 30
 
-Variant 2 (discrete grid-hop) is the default baseline. START SMALL: magnitude 20
-is the default (README notes PWM < ~30 is near the motor deadzone, so if the car
-does not move, raise --magnitude, or for variant 1 set --deadzone-pwm 30).
+Variant 2 (discrete grid-hop) is the default baseline. START SMALL: the default is
+LiveConfig.magnitude = 30 (the motors' friction floor is ~14 PWM, and below ~17.4
+the planner cannot steer at all, so if the car does not move, raise --magnitude).
 
 Ctrl-C hard-estops. Link loss and an imminent-collision guard also estop.
 """
@@ -52,7 +52,7 @@ def main():
     ap.add_argument("--goal-dist", type=float, default=1.0, help="metres ahead to B")
     ap.add_argument("--goal-tol", type=float, default=0.15, help="reached radius (m)")
     ap.add_argument("--magnitude", type=float, default=C.LiveConfig.magnitude,
-                    help="drive magnitude (PWM). START SMALL (default 20)")
+                    help="drive magnitude (PWM). START SMALL (default 30)")
     ap.add_argument("--step-duration", type=float, default=0.5,
                     help="variant 2 seconds per hop")
     ap.add_argument("--pwm-offset", type=float, default=None,

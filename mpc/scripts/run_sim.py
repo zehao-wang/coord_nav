@@ -5,7 +5,7 @@
     python scripts/run_sim.py --variant 1 --scenario slalom --plot out.png
     python scripts/run_sim.py --variant 2 --all               # whole suite table
     python scripts/run_sim.py --policy my_model --all         # YOUR registered model
-    python scripts/run_sim.py --policy mpc_vw --plan-dt 0.25  # at the live cadence
+    python scripts/run_sim.py --policy mpc_vw --plan-dt 0.333 # at the live cadence
 
 --variant takes the two built-ins (1|2) with the sim profile; --policy takes any
 key in POLICY_REGISTRY (see mpc_baseline/registry.py) with the live profile.

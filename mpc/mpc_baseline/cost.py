@@ -17,8 +17,9 @@ def goal_cost(states, goal, cost_cfg, dt):
     term scales with the number of steps, so changing the horizon silently
     re-weights running-vs-terminal and obstacle-vs-goal. That bit us for real --
     re-timing the planner from H=16/dt=0.6 to H=29/dt=1/3 at identical lookahead
-    turned 0 collisions into 2 purely through this. Weights are calibrated so the
-    numbers match the old raw-sum tuning at dt=0.6."""
+    turned 0 collisions into 2 on the 1-seed suite purely through this (over 20
+    seeds the re-timing itself was neutral). Weights are calibrated so the numbers
+    match the old raw-sum tuning at dt=0.6."""
     pos = states[:, :, :2]                                   # (K, H, 2)
     gx, gy = goal[0], goal[1]
     d2 = (pos[:, :, 0] - gx) ** 2 + (pos[:, :, 1] - gy) ** 2  # (K, H)

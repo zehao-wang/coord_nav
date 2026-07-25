@@ -3,6 +3,50 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.7 - 2026-07-25 - default magnitude 30; repo-wide stale-claim sweep
+
+**`LiveConfig.magnitude` 20 -> 30.** The old 20 was chosen when the proportional
+model claimed it meant 0.10 m/s. Under the calibrated plant it is 0.083 m/s with
+only 0.176 rad/s of yaw (turn radius 0.47 m), barely above the magnitude-17.4 floor
+where yaw becomes exactly zero. Tight suite over 20 seeds:
+
+    mag 20   v_max 0.083   yaw <= 0.176   radius 0.47 m   success 0.333   collide 0.000
+    mag 25   v_max 0.153   yaw <= 0.520   radius 0.29 m   success 0.842   collide 0.000
+    mag 30   v_max 0.222   yaw <= 0.863   radius 0.26 m   success 0.992   collide 0.008
+    mag 40   v_max 0.361   yaw <= 1.200   radius 0.30 m   success 0.975   collide 0.025
+
+Failures at 20 are timeouts, not collisions -- the car is simply too slow to steer.
+The GUI spinbox now reads the same constant instead of carrying its own default, so
+there is one number. 40 remains the value the five on-car 5 m runs used.
+
+**Stale-claim sweep.** Six agents checked every quantitative claim in the code
+comments and docs against the current code; 38 validated corrections applied, each
+with its `old` text verified unique before replacement. The session re-measured the
+robot and rewrote the controller repeatedly, and every round left numbers behind.
+Representative:
+
+- `config.py` module docstring named `sim_config()`/`live_config()`, which have
+  never existed (the factories are `sim_config_v1/_v2`, `live_config_v1/_v2`).
+- The calibration block labelled the 10.5 V row "shipped" including its arm 0.198,
+  but the shipped arm is 0.196, the midpoint of the two sessions.
+- "the arm is a CONSTANT (0.216/0.196/0.184)" contradicted its own numbers: that is
+  a monotone -15 % drift with PWM. It is now stated as "nearly stops drifting",
+  against the -43 % the proportional model produced.
+- `noise_tau = 0.8425` was documented as "the shipped beta=0.7 at the default tick";
+  `exp(-(1/3)/0.8425)` is 0.673. 0.9346 would give 0.7. Comment corrected, value kept.
+- `kinematics.py` still quoted the superseded 9.8 V fit `(PWM-17.0)/73.4` with
+  +-0.003 residuals; shipped is `(PWM-14.0)/72.1` with +-0.001.
+- "car_base uses the identical mix (its WZ_ARM == arm)" -- car_base_node still has
+  WZ_ARM 0.5 against our 0.196; the FORM matches, the value has not since 0.9.0.
+- `obstacles.raw_min_distance`'s docstring named two consumers that no longer call it.
+- The tick-log legend documented a **`HOLD` flag that no code path emits** (the real
+  one is `STALE`), and the example log lines were missing two columns the log emits.
+- Several CLI docstrings still advertised `--deadzone-pwm` (deleted) and `plan_dt
+  0.25` (the period of the deleted `LiveConfig.plan_rate`).
+
+A mechanical check now confirms the tick-log legend and the flags the runner emits
+are the same set in both directions.
+
 ## 0.9.6 - 2026-07-25 - safety: the guard shipped OFF, and the tick delay was uncompensated
 
 The review's synthesis, after re-measuring everything against 0.9.5. Three of these

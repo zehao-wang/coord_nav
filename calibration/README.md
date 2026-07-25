@@ -60,7 +60,7 @@ python calibration/calib_model.py --all --mags 30,40,60 --secs 1.5
 
 ```
  9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194     拟合残差 ±0.003 m/s
-10.5 V : pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198     ← 当前配置
+10.5 V : pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198     ← 当前配置(config 的 wz_arm = 两次中值 0.196)
 ```
 
 斜率只差 **1.8%**、臂长差 **2%**;动得最多的是**摩擦阈值**(17→14,电压高时更低的 PWM 就能破静摩擦)。

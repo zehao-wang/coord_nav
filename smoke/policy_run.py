@@ -37,9 +37,10 @@ GYRO_SIGN = -1.0
 
 
 class GyroYaw(object):
-    """Independent yaw estimate by integrating /imu angular_velocity.z, to cross-check
-    the encoder /odom yaw during a real drive. Bias = mean of the first `nbias` samples
-    (car must be still)."""
+    """Second yaw estimate by integrating /imu angular_velocity.z, to cross-check the
+    /odom yaw during a real drive. car_base_node now integrates the SAME gyro for odom
+    yaw (yaw_source=gyro), so this checks the two integrations, not two sensors.
+    Bias = mean of the first `nbias` samples (car must be still)."""
 
     def __init__(self, nbias=15):
         self._yaw = 0.0

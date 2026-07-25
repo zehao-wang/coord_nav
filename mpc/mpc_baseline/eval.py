@@ -43,7 +43,8 @@ def _default_plan_dt(cfg):
     live runner executes exactly one planned step per tick and MPPIConfig.dt is the
     tick, so the offline loop reproduces the live cadence instead of running at a
     different period than the car (it used to close the loop at MPPIConfig.dt=0.6 s
-    while the runner applied each step for 1/plan_rate=0.25 s).
+    while the runner applied each step for 0.25 s, the period of the since-deleted
+    LiveConfig.plan_rate).
     """
     mppi = getattr(cfg, "mppi", None)
     if mppi is not None:
@@ -104,8 +105,9 @@ def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
 
     Fresh policy + sim per scenario, constructed through registry.build_policy so
     the action_space / build-signature checks apply here too. `magnitude` defaults
-    to 40 (the GUI default and the value the car was validated at; 20 cannot steer,
-    see mpc/README.md). Returns a list of EpisodeResult, so print_table / summarize
+    to 40, the value the five on-car 5 m runs used; the shipped live default is 30
+    (LiveConfig.magnitude) and below ~17.4 the car cannot steer at all, see
+    calibration/README.md. Returns a list of EpisodeResult, so print_table / summarize
     / to_json work on it exactly like a built-in variant.
 
     NOTE the registry always builds a LIVE config (registry build() calls

@@ -56,8 +56,9 @@ class Variant1Policy(Policy):
         """(K, H, 2) sampled [v, w] sequences around `nom`. The noise is SMOOTHED
         along the horizon (AR(1)), so a sample is a sustained manoeuvre (a real
         turn) rather than per-step jitter -- that is what covers smooth go-arounds.
-        Clipped to the velocity box AND the differential-drive limit |w| <=
-        (1 - min_inner_frac) * v / steer_arm (inner wheel keeps rolling forward)."""
+        Clipped to the velocity box AND to the yaw the car can actually DELIVER,
+        yaw_gain*((1-min_inner_frac)*v/steer_arm - yaw_deadband), capped at w_max
+        (the mix limit keeps the inner wheel rolling forward -- see below)."""
         m = self.cfg.mppi
         H, K = m.horizon, m.samples
         arm = max(self.cfg.steer_arm, 1e-6)
