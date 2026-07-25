@@ -56,8 +56,8 @@ def main():
                     help="variant 2 seconds per hop")
     ap.add_argument("--deadzone-pwm", type=float, default=0.0,
                     help="variant 1: bump nonzero wheel PWM up to this (motor deadzone ~30)")
-    ap.add_argument("--plan-rate", type=float, default=C.LiveConfig.plan_rate,
-                    help="variant 1 replans/s")
+    ap.add_argument("--tick-hz", type=float, default=C.TickConfig.rate_hz,
+                    help="GLOBAL tick rate; must equal the car's perception rate")
     ap.add_argument("--timeout", type=float, default=25.0, help="episode timeout (s)")
     ap.add_argument("--allow-rotation", action="store_true",
                     help="variant 2: also allow in-place rotation actions")
@@ -65,7 +65,7 @@ def main():
 
     cfg = build_cfg(args)
     live = C.LiveConfig()
-    live.plan_rate = args.plan_rate
+    live.tick.rate_hz = args.tick_hz
     live.magnitude = args.magnitude
 
     # An abnormal exit / Ctrl-C / link loss / imminent collision always hard-estops

@@ -89,7 +89,8 @@ class MPCController(QObject):
         self._thread = None
 
     def start(self, policy_key, magnitude, goal_x, goal_y, pose_source,
-              collision_guard, step_duration, allow_rotation, execute_steps=1):
+              collision_guard, step_duration, allow_rotation, execute_steps=1,
+              tick_hz=None):
         # build the selected policy backend from the registry (any Policy works).
         # build_policy validates the build() signature and that the policy's
         # action_space matches the registry entry -- a mismatch would bind the
@@ -98,6 +99,8 @@ class MPCController(QObject):
             policy_key, magnitude, goal_x, goal_y=goal_y,
             step_duration=step_duration, allow_rotation=allow_rotation)
         live = mpc_config.LiveConfig()
+        if tick_hz:                    # the ONE rate: same tick the view runs on
+            live.tick.rate_hz = tick_hz
         live.magnitude = magnitude
         live.collision_abort = collision_guard
         live.execute_steps = execute_steps
@@ -268,6 +271,11 @@ class ObstacleView(QWidget):
 # Main window
 # ===========================================================================
 class MainWindow(QMainWindow):
+    # Poll this many times per tick and edge-detect the frame_id. Polling exactly
+    # at the tick rate would alias against the car's publish instants (sometimes
+    # two frames in one poll, sometimes none).
+    TICK_OVERSAMPLE = 4
+
     def __init__(self):
         super().__init__()
         self.client = CarClient(init_node=True)
@@ -337,13 +345,16 @@ class MainWindow(QMainWindow):
         form = QFormLayout(conn)
         master = QLabel(os.environ.get("ROS_MASTER_URI", "(unset)"))
         master.setStyleSheet("color:#8a9098;")
-        self.hz_spin = self._spin(0.5, 3.0, 0.5, 3.0)     # capped at 3 Hz (read rate)
+        # THE global tick rate. Must equal the car's perception rate (obstacle_circles
+        # rate_hz in viz.launch) -- the runner and this view both advance one frame per
+        # tick, so a different number here would just alias against the real clock.
+        self.hz_spin = self._spin(0.5, 10.0, 0.5, mpc_config.TickConfig.rate_hz)
         self.mag_spin = self._spin(0.0, 80.0, 5.0, 40.0)    # base magnitude (cap 80)
         self.dur_spin = self._spin(0.1, 3.0, 0.1, 0.5)      # step move = exact run time, no compensation
         self.diag_spin = self._spin(1.0, 4.0, 0.1, 1.6)     # diagonal magnitude multiplier
         self.strafe_spin = self._spin(1.0, 4.0, 0.1, 1.2)   # strafe magnitude multiplier
         form.addRow("ROS master", master)
-        form.addRow("refresh Hz", self.hz_spin)
+        form.addRow("tick Hz (global)", self.hz_spin)
         form.addRow("magnitude (x)", self.mag_spin)
         form.addRow("step move(s)", self.dur_spin)
         form.addRow("diag mult", self.diag_spin)
@@ -482,9 +493,11 @@ class MainWindow(QMainWindow):
         # diag mult is a calibration value -> only takes effect on apply, and the
         # magnitude ceiling (= 80 / diag_mult) is recomputed here too.
         hz = self.hz_spin.value()
-        self.poll_timer.start(int(1000.0 / hz))
+        # Poll several times per tick and edge-detect the frame_id, so a tick is
+        # picked up promptly however the car's publish instants drift against us.
+        self.poll_timer.start(max(20, int(1000.0 / (hz * self.TICK_OVERSAMPLE))))
         self._update_mag_cap()
-        self.log("SEND", "apply: refresh=%.1fHz mag=%.0f move=%.2fs diag=%.1fx strafe=%.1fx"
+        self.log("SEND", "apply: tick=%.1fHz mag=%.0f move=%.2fs diag=%.1fx strafe=%.1fx"
                  % (hz, self.mag_spin.value(), self.dur_spin.value(),
                     self.diag_spin.value(), self.strafe_spin.value()))
 
@@ -495,6 +508,10 @@ class MainWindow(QMainWindow):
                  % (r.get("reason"), r.get("action"), r.get("took_ms")))
 
     def _poll_tick(self):
+        """Runs on the GLOBAL tick: the timer polls faster than the tick, but the
+        observation/render/record work happens once per NEW frame_id -- the same
+        tick boundary PolicyRunner advances on. A free-running refresh would either
+        redraw frames it had already drawn or skip frames outright."""
         self._update_link()
         # ONE sample: circles + the points they were clustered from, same frame_id
         obs = self.client.observation()
@@ -503,6 +520,9 @@ class MainWindow(QMainWindow):
         else:
             fid, circ, connected = obs.frame_id, obs.circles, obs.age < 1.5
             pts = obs.points
+        if obs is not None and fid == getattr(self, "_last_fid", None):
+            return                        # same tick as last poll: nothing new to do
+        self._last_fid = fid
         # report obstacle disconnect/reconnect transitions (disconnect -> ERR)
         if getattr(self, "_obs_conn", True) != connected:
             self._obs_conn = connected
@@ -608,7 +628,8 @@ class MainWindow(QMainWindow):
             self.mpc.start(policy_key, self.mag_spin.value(), gx, gy,
                            self.odom_combo.currentData(), self.collision_cb.isChecked(),
                            self.dur_spin.value(), False,
-                           int(self.exec_steps_spin.value()))
+                           int(self.exec_steps_spin.value()),
+                           tick_hz=self.hz_spin.value())
         except Exception as exc:
             # policy build / runner construction runs synchronously here; if it
             # raises, the worker thread never starts and 'finished' never fires --

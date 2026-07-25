@@ -117,6 +117,9 @@ class CarClient(object):
         self._lyaw, self._lx, self._ly = lidar_yaw, lidar_x, lidar_y
 
         self._lock = threading.Lock()
+        # signalled on every new /obstacles frame -- this is what wait_frame()
+        # (the stack's tick boundary) blocks on.
+        self._frame_cv = threading.Condition(self._lock)
         self._latest = None            # (frame_id, circles, monotonic_time)
         self._history = deque(maxlen=100)
         self._last_result = None
@@ -161,9 +164,10 @@ class CarClient(object):
             return
         fid, circ = _parse(m.data)
         now = time.monotonic()
-        with self._lock:
+        with self._frame_cv:               # same underlying lock as self._lock
             self._latest = (fid, circ, now)
             self._history.append((fid, circ, now))
+            self._frame_cv.notify_all()    # release everyone waiting on the tick
         if self._dump_fh is not None:
             try:
                 self._dump_fh.write(json.dumps(
@@ -251,6 +255,30 @@ class CarClient(object):
             return None
         pts, t = snap
         return ObsPoints(fid, pts, time.monotonic() - t)
+
+    def wait_frame(self, after=None, timeout=1.0):
+        """Block until an observation frame OTHER than `after` arrives; return it.
+
+        This is the TICK boundary of the whole stack: perception publishes at a
+        fixed rate on the car and every consumer (planner, actuation, GUI render)
+        advances on the same frame, so nobody re-plans on a frame it already saw
+        and nobody skips one. Returns Frame(...) or None on timeout.
+
+        Matching is "different id", not "greater id": the car's frame counter
+        restarts at 1 with car-ros, so a `>` test would hang until the counter
+        climbed back past the pre-restart value.
+        """
+        deadline = time.monotonic() + timeout
+        with self._frame_cv:
+            while True:
+                snap = self._latest
+                if snap is not None and snap[0] != after:
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None
+                self._frame_cv.wait(left)
+        return self.observation()
 
     def observation(self):
         """One SAMPLE: Frame(frame_id, circles, points, age) -- circles and points

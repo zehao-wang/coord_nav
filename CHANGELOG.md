@@ -3,6 +3,63 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.7.0 — 2026-07-25 — one global tick; command buffering; dt-invariant cost
+
+The stack had three unsynchronised clocks: perception 3 Hz, the variant-1 loop
+4 Hz (free-running, never waiting for a new frame), and the variant-2 loop ~1.61 Hz
+(paced by `time.sleep(step_duration + SETTLE_S)` inside the actuator). Consequences,
+by arithmetic: variant 1 re-planned on an observation frame it had already seen on
+about 1 cycle in 4; variant 2 never looked at about half the frames at all.
+
+Now everything runs on ONE tick, game-engine style. `TickConfig.rate_hz` (3.0 = the
+car's perception rate) is the single number; `LiveConfig.plan_rate` is gone.
+
+- **A tick is one observation frame.** New `carclient.wait_frame(after, timeout)`
+  blocks on a condition variable signalled by `_on_obs`, so a tick fires exactly
+  once per new `frame_id` — no repeats, no skips (verified: 9 frames -> 9 ticks,
+  0 repeats, 0 skips). It matches on "different id", not "greater id", so the
+  car-ros restart that resets `frame_counter_` to 1 does not hang it.
+- **Commands are buffered one tick.** Inside a tick: wait for the frame, run the
+  safety checks on that FRESH frame, DISPATCH what the previous tick decided
+  (superseding whatever the car is still running), then plan this frame into the
+  buffer for the next tick. Emit nothing and the car keeps running its current
+  command; let it expire and the car holds (the car-side node brakes at
+  `end_time`). Deterministic one-tick latency instead of jitter.
+- **`DriveActionActuator.step()` no longer blocks.** It slept for the whole hop,
+  which is what paced variant 2 off the hop instead of off perception. The car-side
+  handler already ends a running move as "superseded" and starts the new one
+  immediately, so back-to-back hops stay continuous. The runner now rejects
+  `step_duration < tick period` (the hop would expire before the next tick replaced
+  it and the car would brake in the gap).
+- **`_hold()` now actually stops a discrete policy.** It was a no-op on the premise
+  that discrete policies are "between hops" — true only while the runner slept
+  through each hop. With non-blocking dispatch a hop can be running when a tick
+  decides to hold.
+- **The GUI runs on the same tick**: it polls at 4x and edge-detects `frame_id`, so
+  observation, render and recording happen exactly once per tick. "refresh Hz" is
+  now "tick Hz (global)" and is passed into the runner.
+
+**Model timing aligned, and the cost made dt-invariant.** `MPPIConfig.dt` is now the
+tick (1/3 s, was 0.6 s against a 0.25 s execution period), with `horizon` 16 -> 29 to
+keep the same 9.7 s lookahead; solve time 6.9 ms mean / 9.2 ms max against a 333 ms
+budget. That retune initially turned 0 collisions into 2, which exposed a real latent
+bug: **every running cost term was a raw sum over H**, so changing the horizon
+silently re-weighted running-vs-terminal and obstacle-vs-goal. Running terms are now
+integrals (`x dt`) and smoothness is a rate (`du^2/dt`); weights are the
+car-validated values divided by the old dt=0.6 (`w_smooth` x0.6), so the old timing
+reproduces its old numbers exactly. `noise_beta` likewise became `noise_tau`, an
+AR(1) time constant in seconds, so a sampled manoeuvre stays the same manoeuvre when
+the tick changes.
+
+**Honest result:** measured over 20 seeds x 6 scenarios (n=120), not the single seed
+the headline suite uses — old timing 0.742 success / 0.242 collision / 0.017 frozen,
+new tick timing 0.750 / 0.250 / 0.000. Statistically indistinguishable, which is the
+correct outcome for a timing change. Note the ~24 % collision rate is PRE-EXISTING on
+the old timing too; the 1-seed suite reports 0.833/0.000 and simply cannot see it.
+Variant 2 is unchanged at 0.833 / 0.000 / 0.000.
+
+**Not yet verified on the car** — it was powered down and charging when this landed.
+
 ## 0.6.3 — 2026-07-25 — review of 0.6.2: frame-id reset bug, dead /scan subscription
 
 Self-review of the 0.6.2 change set found one real bug and one real redundancy.

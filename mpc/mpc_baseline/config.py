@@ -39,33 +39,44 @@ class RobotConfig:
 # --- sampling-based MPC (MPPI) core --------------------------------------
 @dataclass
 class MPPIConfig:
-    horizon: int = 16                 # H rollout steps; H*dt ~= 1.9-2.1 m lookahead. Longer
-                                      # than variant 2's 4: differential steering must see a
-                                      # wide/near obstacle early to turn out in time (~14 floor)
+    horizon: int = 29                 # H rollout steps; H*dt ~= 9.7 s ~= 1.9-2.1 m lookahead.
+                                      # Longer than variant 2's 4: differential steering must
+                                      # see a wide/near obstacle early to turn out in time
     samples: int = 400                # K sampled control sequences
-    dt: float = 0.6                   # step time (s); keep dt*w_max < ~40 deg/step or turns
-                                      # cut corners in the rollout
+    dt: float = 1.0 / 3.0             # step time (s) == TickConfig.period. The FIRST planned
+                                      # step is executed for exactly one tick, so the model's
+                                      # step must BE a tick or the rollout predicts a motion
+                                      # the car never performs. (Was 0.6 s against a 0.25 s
+                                      # execution period -- H was 16 to keep the same 9.6 s.)
     noise_v: float = 0.10             # exploration std, m/s
     noise_w: float = 0.7              # exploration std, rad/s
-    noise_beta: float = 0.7           # AR(1) noise smoothing (0 = per-step jitter, ->1 = smooth
-                                      # sustained turns)
+    noise_tau: float = 0.8425         # AR(1) smoothing TIME CONSTANT (s): beta = exp(-dt/tau).
+                                      # In SECONDS, not per-step, so a sampled manoeuvre stays
+                                      # the same MANOEUVRE if the tick rate changes (a per-step
+                                      # beta silently halves the smoothing horizon when dt does).
+                                      # 0.8425 s == the shipped beta=0.7 at the default tick.
+                                      # Larger = longer sustained turns.
     n_iters: int = 3                  # sample -> argmin -> resample refinement passes / cycle
 
 
 @dataclass
 class CostConfig:
     """Weights for the shared cost. Distances are in metres."""
-    w_goal_run: float = 1.0           # per-step distance-to-goal
-    w_goal_term: float = 12.0         # terminal distance-to-goal
-    w_track: float = 2.5              # cross-track: pull back onto the straight A->B line after
+    # Running terms are INTEGRALS (weight x sum x dt), so they no longer change
+    # meaning when the horizon or the step time changes. Values below are the
+    # car-validated raw-sum tuning divided by the old dt=0.6 (x0.6 for w_smooth,
+    # which is a rate), so the numbers are identical to what flew before.
+    w_goal_run: float = 1.6667        # per-second distance-to-goal (was 1.0 per STEP)
+    w_goal_term: float = 12.0         # terminal distance-to-goal (single term, no dt)
+    w_track: float = 4.1667           # cross-track: pull back onto the straight A->B line after
                                       # a detour (variant 1). Higher = tighter, but too high
                                       # fights the wide detour needed around a wall on the line
-    w_obs: float = 60.0               # soft barrier weight inside the buffer
+    w_obs: float = 100.0              # soft barrier weight inside the buffer
     obs_buffer: float = 0.15          # start pushing away this far outside inflation (m)
     extra_margin: float = 0.10        # added to (circle.r + robot_radius) inflation (clearance)
-    w_ctrl_v: float = 0.02            # penalise speed lightly (prefer efficient paths)
-    w_ctrl_w: float = 0.15            # penalise yaw-rate (prefer going straight)
-    w_smooth: float = 0.40            # penalise control CHANGE between steps -> gradual steering
+    w_ctrl_v: float = 0.0333          # penalise speed lightly (prefer efficient paths)
+    w_ctrl_w: float = 0.25            # penalise yaw-rate (prefer going straight)
+    w_smooth: float = 0.24            # penalise the control RATE of change -> gradual steering
     collision_cost: float = 1.0e6     # hard penalty for a rollout that hits inflation
 
 
@@ -126,10 +137,44 @@ class ObstacleConfig:
     max_age_stale: float = 1.0        # ignore an /obstacles frame older than this (s)
 
 
+# --- the global tick -----------------------------------------------------
+@dataclass
+class TickConfig:
+    """THE one rate the whole stack runs on -- game-engine style.
+
+    A tick is one observation frame. Inside a tick: read the observation, run the
+    safety checks, DISPATCH the action decided last tick (it overrides whatever the
+    car is still running), then plan the action for the next tick. Emit nothing and
+    the car simply keeps executing its current command; let that command expire and
+    the car holds its state (the car-side node brakes at end_time).
+
+    rate_hz must equal the car's perception rate (`rate_hz` of obstacle_circles in
+    viz.launch) -- that is the real clock, everything else follows it. Planning
+    faster only re-plans on frames already seen; slower drops frames outright.
+    """
+    rate_hz: float = 3.0              # == obstacle_circles rate_hz on the car
+    action_ticks: float = 1.5         # a dispatched action is given this many ticks of
+                                      # life on the car. >1 so ONE dropped command does
+                                      # not stutter the wheels; <2 so two in a row let it
+                                      # expire and the car brakes instead of running on.
+    wait_ticks: float = 2.0           # give up waiting for a new frame after this many
+                                      # ticks and run the tick anyway (safety still runs)
+
+    @property
+    def period(self):
+        """Seconds per tick."""
+        return 1.0 / self.rate_hz
+
+    @property
+    def action_duration(self):
+        """Duration (s) handed to the car with each dispatched action."""
+        return self.action_ticks / self.rate_hz
+
+
 # --- live runner (real car) ----------------------------------------------
 @dataclass
 class LiveConfig:
-    plan_rate: float = 4.0            # Hz replanning for variant 1 (>= perception 3 Hz)
+    tick: TickConfig = field(default_factory=TickConfig)
     execute_steps: int = 1            # planned steps to apply before re-planning (1 = tight
                                       # closed loop; >1 = N steps open-loop). Safety runs each step
     magnitude: float = 20.0           # START SMALL on the real car

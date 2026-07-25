@@ -65,12 +65,24 @@ class PolicyRunner(object):
         self.action_space = getattr(self.policy, "action_space", "discrete")
 
         self.field = ObstacleField(obs_cfg, time.monotonic)
+        tick = live_cfg.tick
         if self.action_space == "velocity":
-            # car keep-alives each pulse for plan_period + margin (robust to WiFi loss)
-            self.act = VelocityPulseActuator(
-                client, cfg.robot, pulse_duration=1.0 / live_cfg.plan_rate + 0.4)
+            # The car keep-alives each pulse for tick.action_duration (>1 tick), so a
+            # single dropped command holds the last velocity instead of stuttering,
+            # and two in a row let it expire and brake.
+            self.act = VelocityPulseActuator(client, cfg.robot,
+                                             pulse_duration=tick.action_duration)
         else:
             self.act = DriveActionActuator(client)
+            # A hop shorter than a tick expires before the next tick supersedes it
+            # -> the car brakes in the gap and the motion stutters.
+            hop = getattr(cfg, "step_duration", None)
+            if hop is not None and hop < tick.period:
+                raise ValueError(
+                    "step_duration=%.2fs is shorter than one tick (%.2fs at %.1f Hz): "
+                    "each hop would expire before the next tick replaces it and the "
+                    "car would brake between hops. Raise step_duration to >= %.2f."
+                    % (hop, tick.period, tick.rate_hz, tick.period))
         self._link_seen = False
         self._abort = False
         self._dr = np.zeros(3)                # dead-reckoned pose [x, y, yaw]
@@ -169,33 +181,45 @@ class PolicyRunner(object):
             self.act.start()
 
         try:
-            period = 1.0 / self.live.plan_rate
+            tick = self.live.tick
+            period = tick.period
             n_exec = max(1, int(getattr(self.live, "execute_steps", 1)))
             plan, idx = None, 0        # cached (controls, act) + step index into it
+            pending = None             # (ctl, act) decided last tick, dispatched this tick
+            last_fid = None
             while not self.client.is_shutdown():
-                loop_t = time.monotonic()
+                # ---- TICK BOUNDARY: one observation frame = one tick ----------
+                frame = self.client.wait_frame(after=last_fid,
+                                               timeout=tick.wait_ticks * period)
+                if frame is None:      # no new perception frame in time
+                    self.log("no new observation frame -- holding")
+                    self._hold()
+                    plan, pending, idx = None, None, 0
+                    continue
+                last_fid = frame.frame_id
+                obs = frame
+
                 if self._abort:
                     reason = "aborted"
                     break
-                if loop_t - t0 > t_end:
+                if time.monotonic() - t0 > t_end:
                     reason = "timeout"
                     break
                 if self._link_bad():
                     self.client.estop()
                     return self._summary("link_lost_estop", False, goal, t0)
 
-                obs = self.client.obstacles()
                 pose, page = self._read_pose()
-                if (obs is None or pose is None or
-                        obs.age > self.obs_cfg.max_age_stale or
+                if (pose is None or obs.age > self.obs_cfg.max_age_stale or
                         (page is not None and page > self.obs_cfg.max_age_stale)):
                     self.log("stale obstacles/pose -- holding")
                     self._hold()
-                    plan = None        # re-plan fresh once data returns
-                    time.sleep(period)
+                    plan, pending, idx = None, None, 0   # re-plan fresh once data returns
                     continue
 
-                if self._imminent_collision(obs.circles):    # checked EVERY step
+                # Safety runs on the FRESH frame, before anything decided a tick ago
+                # is allowed to reach the wheels.
+                if self._imminent_collision(obs.circles):
                     if self.collision_estop:
                         self.client.estop()
                         return self._summary("collision_estop", False, goal, t0)
@@ -207,28 +231,32 @@ class PolicyRunner(object):
                     reached, reason = True, "reached"
                     break
 
-                # (re)plan every n_exec applied steps; execute one cached step in between
+                # ---- DISPATCH what last tick decided (overrides the car's current
+                # command). Nothing pending -> send nothing: the car keeps running
+                # its last command, and holds once that command expires.
+                if pending is not None:
+                    ctl, act = pending
+                    pending = None
+                    if act.space == "velocity":
+                        v, w = ctl
+                        self.act.set_velocity(v, 0.0, w)
+                        self._advance_dr((v, 0.0, w), period)
+                        self._emit_step(pose, goal, gd, obs, v=v, w=w, traj=act.traj)
+                    else:
+                        aid, mag, dur = ctl
+                        self.act.step(aid, mag, dur)          # non-blocking
+                        self._advance_dr(action_body_velocity(aid, mag, self.cfg.robot),
+                                         period)
+                        self._emit_step(pose, goal, gd, obs, action=aid, traj=act.traj)
+
+                # ---- PLAN this tick's observation -> the action for the NEXT tick.
                 if plan is None or idx >= min(n_exec, len(plan[0])):
                     self.field.update(obs.circles, pose)
                     act = self.policy.plan(Observation(pose, goal, obs.circles, self.field))
                     plan, idx = (self._controls_of(act), act), 0
                 controls, act = plan
-                ctl = controls[idx]
+                pending = (controls[idx], act)
                 idx += 1
-
-                if act.space == "velocity":
-                    v, w = ctl
-                    self.act.set_velocity(v, 0.0, w)
-                    self._advance_dr((v, 0.0, w), period)
-                    self._emit_step(pose, goal, gd, obs, v=v, w=w, traj=act.traj)
-                    dt = period - (time.monotonic() - loop_t)
-                    if dt > 0:
-                        time.sleep(dt)
-                else:
-                    aid, mag, dur = ctl
-                    self._emit_step(pose, goal, gd, obs, action=aid, traj=act.traj)
-                    self.act.step(aid, mag, dur)
-                    self._advance_dr(action_body_velocity(aid, mag, self.cfg.robot), dur)
             return self._summary(reason, reached, goal, t0)
         except BaseException as exc:                       # incl. KeyboardInterrupt
             self.log("ABORT (%s) -- estop" % type(exc).__name__)
@@ -264,9 +292,16 @@ class PolicyRunner(object):
                           "traj": traj.tolist() if traj is not None else None})
 
     def _hold(self):
+        """Stop the car NOW, whatever it is running.
+
+        Both action spaces need this: since hops are dispatched non-blocking, a
+        discrete hop can still be running when a tick decides to hold, so "discrete
+        policies are between hops" (the old assumption, true only while the runner
+        slept through each hop) no longer holds."""
         if self.action_space == "velocity":
             self.act.set_velocity(0.0, 0.0, 0.0)
-        # discrete policies are between hops -> nothing to hold
+        else:
+            self.act.stop()
 
     def _shutdown_actuator(self):
         try:

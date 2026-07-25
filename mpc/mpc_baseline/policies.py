@@ -62,7 +62,10 @@ class Variant1Policy(Policy):
         arm = max(self.cfg.steer_arm, 1e-6)
         frac = self.cfg.min_inner_frac
         raw = self.rng.normal(0.0, (m.noise_v, m.noise_w), size=(K, H, 2))
-        beta = m.noise_beta
+        # beta from a TIME constant, so a sample is the same physical manoeuvre
+        # whatever the step time: a per-step beta would halve the smoothing horizon
+        # (in seconds) the moment dt halved.
+        beta = float(np.exp(-m.dt / max(m.noise_tau, 1e-6)))
         noise = np.empty_like(raw)
         # step 0 seeded at full sigma (not the AR(1) stationary scale) -> after the
         # rescale below it is the noisiest step: extra exploration on the control we
@@ -101,7 +104,7 @@ class Variant1Policy(Policy):
             seqs = self._perturb(nom)                                  # (K, H, 2)
             states = rollout_unicycle(pose, seqs, m.dt)                # (K, H, 3)
             cost, _ = total_cost_velocity(states, seqs, goal, line, obs.field,
-                                          self.cfg.robot, self.cfg.cost)
+                                          self.cfg.robot, self.cfg.cost, m.dt)
             b = int(np.argmin(cost))
             best_seq, best_states, nom = seqs[b], states[b], seqs[b]
         self._nominal = np.vstack([best_seq[1:], best_seq[-1:]])       # time-shift warm start
@@ -142,7 +145,8 @@ class Variant2Policy(Policy):
         states = rollout_body(pose, body, self.cfg.step_duration)
 
         cost, _collided = total_cost_discrete(
-            states, goal, obs.field, self.cfg.robot, self.cfg.cost)
+            states, goal, obs.field, self.cfg.robot, self.cfg.cost,
+            self.cfg.step_duration)
 
         best = int(np.argmin(cost))
         best_seq = seqs[best]

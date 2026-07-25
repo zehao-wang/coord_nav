@@ -46,21 +46,26 @@ class VelocityPulseActuator(object):
 
 
 class DriveActionActuator(object):
-    """Execute discrete hops via /drive_action. Pace by the hop DURATION, not by
-    waiting on /drive_result: results carry no hop id, so a delayed/duplicate result
-    from a previous hop would end the wait early and truncate the current hop. Sleep
-    the pulse plus a settle so the next hop begins only after this one finishes."""
+    """Execute discrete hops via /drive_action, NON-BLOCKING.
 
-    SETTLE_S = 0.12    # comms + car-side brake arm before the next hop is issued
+    One hop is fired per tick and the next tick's hop supersedes it -- the car-side
+    handler ends a running move ("superseded") and starts the new one immediately,
+    so back-to-back hops are continuous with no brake in between. This used to
+    sleep for the hop duration, which paced the loop off the hop instead of off the
+    perception tick (0.5 + 0.12 s = ~1.6 Hz against 3 Hz perception, dropping about
+    half the frames).
+
+    The hop DURATION must be >= one tick, otherwise the hop expires before the next
+    tick supersedes it and the car brakes in the gap (visible stutter). The runner
+    checks this."""
 
     def __init__(self, client):
         self.client = client
 
     def step(self, action, magnitude, duration):
-        """Fire one discrete hop and block for its duration (+ settle). Returns the
-        latest /drive_result dict, best-effort, for logging."""
+        """Fire one discrete hop and return immediately. Returns the latest
+        /drive_result dict, best-effort, for logging."""
         self.client.drive(action, magnitude, duration)
-        time.sleep(duration + self.SETTLE_S)   # Ctrl-C still interrupts (estop)
         return self.client.last_result()
 
     def stop(self):

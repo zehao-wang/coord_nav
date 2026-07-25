@@ -39,17 +39,16 @@ def _cfg_for(variant, live, goal_dist):
 def _default_plan_dt(cfg):
     """Control period the offline loop applies one planned step for.
 
-    A cfg carrying an `mppi` block keeps that block's dt (matching how
-    run_variant(1) has always been benchmarked). Anything else -- a custom model's
-    cfg -- gets the LIVE cadence, which is what PolicyRunner actually does on the
-    car. Those are NOT the same number: MPPIConfig.dt is 0.6 s while the live
-    runner replans at 1/LiveConfig.plan_rate = 0.25 s. Pass plan_dt explicitly to
-    compare policies at one common cadence.
+    This is now ONE number everywhere: the global tick (TickConfig.period). The
+    live runner executes exactly one planned step per tick and MPPIConfig.dt is the
+    tick, so the offline loop reproduces the live cadence instead of running at a
+    different period than the car (it used to close the loop at MPPIConfig.dt=0.6 s
+    while the runner applied each step for 1/plan_rate=0.25 s).
     """
     mppi = getattr(cfg, "mppi", None)
     if mppi is not None:
         return mppi.dt
-    return 1.0 / C.LiveConfig.plan_rate
+    return C.TickConfig().period
 
 
 def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,

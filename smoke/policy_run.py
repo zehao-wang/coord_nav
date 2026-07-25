@@ -79,7 +79,7 @@ def run(args):
     cfg.goal.timeout_s = args.timeout
     live = C.LiveConfig()
     live.magnitude = args.mag
-    live.plan_rate = args.plan_rate
+    live.tick.rate_hz = args.tick_hz
     live.execute_steps = args.exec_steps
     # Guard OFF by default: obstacle circles already carry margin + planner inflates, so
     # the guard is redundant and was false-tripping mid-go-around. --guard re-arms it.
@@ -207,7 +207,8 @@ def main():
     ap.add_argument("--mag", type=float, default=40.0)
     ap.add_argument("--tol", type=float, default=0.15)
     ap.add_argument("--timeout", type=float, default=35.0)
-    ap.add_argument("--plan-rate", type=float, default=4.0)
+    ap.add_argument("--tick-hz", type=float, default=3.0,
+                    help="GLOBAL tick rate; must equal the car's perception rate")
     ap.add_argument("--exec-steps", type=int, default=1,
                     help="planned steps to apply before re-planning (1 = tight closed loop)")
     ap.add_argument("--guard", action="store_true",
