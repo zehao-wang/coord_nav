@@ -101,6 +101,7 @@ class CarClient(object):
         self._history = deque(maxlen=100)
         self._last_result = None
         self._result_cb = None
+        self._scan_cb = None
         self._volt = None              # (voltage, monotonic_time)
         self._pose = None              # (x, y, yaw, monotonic_time)
         self._scan = None              # (base-frame points [(x,y),...], monotonic_time)
@@ -196,6 +197,24 @@ class CarClient(object):
             a += m.angle_increment
         with self._lock:
             self._scan = (pts, time.monotonic())
+            cb = self._scan_cb
+        if cb is not None:
+            try:
+                cb({"frame_id": int(m.header.seq),
+                    "timestamp": m.header.stamp.to_sec(),
+                    "stamp_secs": int(m.header.stamp.secs),
+                    "stamp_nsecs": int(m.header.stamp.nsecs),
+                    "ros_frame": m.header.frame_id,
+                    "points": pts})
+            except Exception:
+                pass
+
+    def on_scan(self, callback):
+        """Register callback(frame), invoked from the rospy subscriber thread for
+        every /scan. frame has frame_id, ROS timestamp, ros_frame, and base-frame
+        XY points (plus exact stamp_secs/stamp_nsecs). Pass None to unregister."""
+        with self._lock:
+            self._scan_cb = callback
 
     def scan_points(self):
         """Latest /scan as base-frame points ScanPoints(pts=[(x,y),...], age), or

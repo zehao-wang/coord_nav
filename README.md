@@ -25,7 +25,8 @@
 2. **改 `car_env.sh` 顶部 config 块**为本机：`CONDA_ROOT`（你的 conda 路径）、`SELF_IP`（本机在热点上的 IP）、`CAR_IP`（小车 IP）。
 3. **装 Python 包**（脚本 / 接模型 / GUI 都需要）：
    ```bash
-   conda activate ros1 && pip install -e carclient carpolicy mpc
+   conda activate ros1
+   pip install -e ./carclient -e ./carpolicy -e ./mpc
    ```
 4. **`/etc/hosts` 加一行**（客户端靠主机名收数据，少了会"能 list 但收不到数据"）：`10.42.0.187 jetson-desktop`
 5. *（可选）* `roscar` 快捷方式：`~/.bashrc` 里加 `roscar(){ source /绝对路径/car_env.sh; }`，等价于直接 `source car_env.sh`。
@@ -102,7 +103,7 @@ circles  = [(m.data[i], m.data[i+1], m.data[i+2]) for i in range(1, len(m.data)-
 
 ## GUI（`gui/car_console.py`）
 
-`bash gui/run_gui.sh` 打开（用当前 $DISPLAY）。三区：**win0** 障碍俯视图（前=上、车在中心、红障碍圆 + 绿目标 B + 黄 MPC 预测轨迹 + 断线变橙）｜ **win1** 控制面板（**policy 下拉 + B 坐标 + execute steps + Execute/Stop** 跑 A→B；下方 3×3 方向盘 + `↺↻` 手动单步 + 红 E-STOP）｜ **win2** 日志（GET/SEND/ERR 三色过滤，全量 dump 到 `gui/car_console.log`）。**每次 Execute 跑完**自动存 `output/<日期_时间>/`：`observation.mp4`（3Hz 观测视频）+ `trajectory.png` + `run.json`。全部 ROS I/O 走 `carclient`。
+`bash gui/run_gui.sh` 打开（用当前 $DISPLAY）。三区：**win0** 障碍俯视图（前=上、车在中心、红障碍圆 + 绿目标 B + 黄 MPC 预测轨迹 + 断线变橙）｜ **win1** 控制面板（**policy 下拉 + B 坐标 + execute steps + Execute/Stop** 跑 A→B；下方 3×3 方向盘 + `↺↻` 手动单步 + 红 E-STOP）｜ **win2** 日志（GET/SEND/ERR 三色过滤，全量 dump 到 `gui/car_console.log`）。**每次 Execute 跑完**自动存 `output/<日期_时间>/`：`observation.mp4`（3Hz 观测视频）+ `trajectory.png` + `run.json`。Point cloud 区的 **Start recording / Stop & save** 会逐帧录制 `/scan`，保存到 `output/pointcloud/scan_<日期_时间>.npz`；其中 `frame_ids`、`timestamps`（另有无精度损失的 `stamp_secs` + `stamp_nsecs`）、`ros_frames` 是逐帧元数据，第 `i` 帧 XY 点为 `points[offsets[i]:offsets[i+1]]`。全部 ROS I/O 走 `carclient`。
 
 ---
 

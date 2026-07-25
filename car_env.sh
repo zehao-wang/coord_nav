@@ -6,7 +6,7 @@
 # --- config (edit here if the setup changes) ---------------------------
 CAR_IP=10.42.0.187          # car's fixed IP on the coord_nav hotspot
 SELF_IP=10.42.0.1           # this workstation's IP on the hotspot
-CONDA_ROOT=/home/zwa0839/miniconda3
+CONDA_ROOT=/home/minye/miniconda3
 ROS_ENV=ros1
 
 # --- activate ROS Noetic (conda) ---------------------------------------

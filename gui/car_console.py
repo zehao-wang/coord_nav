@@ -43,6 +43,8 @@ LOG_DUMP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "car_console
 # Each Execute run is saved under output/<YYYY-MM-DD_HH-MM-SS-mmm>/ : the observation
 # window recorded as observation.mp4 (~3 Hz), a trajectory.png, and run.json.
 RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
+# Manually recorded raw /scan XY frames are saved here as timestamped .npz files.
+POINTCLOUD_DIR = os.path.join(RUNS_DIR, "pointcloud")
 
 DIR_GRID = [  # (row, col, action_id, label) laid out as the 3x3 wheel
     (0, 0, 2, "↖"), (0, 1, 1, "↑"), (0, 2, 8, "↗"),
@@ -265,8 +267,11 @@ class MainWindow(QMainWindow):
         self.client.on_result(lambda r: self.relay.result.emit(r))
         self.mpc = None                 # MPCController while a policy is running
         self._rec = None                # per-Execute run recorder state, or None
+        self._pc_rec = None             # manual point-cloud recorder state, or None
+        self._pc_rec_lock = threading.Lock()
         self.reclog = ResultRelay()     # thread-safe (queued) recorder -> log bridge
-        self.reclog.result.connect(lambda m: self.log("SEND", m))
+        self.reclog.result.connect(self._on_recorder_result)
+        self.client.on_scan(self._on_scan_record)
         self.setWindowTitle("Car Console — mecanum / ROS1")
         self.resize(1120, 760)
 
@@ -351,16 +356,26 @@ class MainWindow(QMainWindow):
 
         # point cloud: raw /scan drawn (blue) in the top-down view, radius GUI-set
         pc = QGroupBox("Point cloud  (/scan)")
-        pcl = QHBoxLayout(pc)
+        pcl = QGridLayout(pc)
         self.pc_cb = QCheckBox("show (blue)")
         self.pc_cb.setChecked(False)
         self.pc_cb.toggled.connect(self.view.set_show_points)
-        pcl.addWidget(self.pc_cb)
-        pcl.addWidget(QLabel("radius m"))
+        pcl.addWidget(self.pc_cb, 0, 0)
+        pcl.addWidget(QLabel("radius m"), 0, 1)
         self.pc_radius = self._spin(0.005, 0.30, 0.005, 0.02)
         self.pc_radius.valueChanged.connect(self.view.set_point_radius)
-        pcl.addWidget(self.pc_radius)
-        pcl.addStretch(1)
+        pcl.addWidget(self.pc_radius, 0, 2)
+        self.pc_rec_start_btn = QPushButton("Start recording")
+        self.pc_rec_start_btn.setStyleSheet("background:#1f8b4c; color:white;")
+        self.pc_rec_start_btn.clicked.connect(self.on_pc_record_start)
+        self.pc_rec_stop_btn = QPushButton("Stop && save")
+        self.pc_rec_stop_btn.setEnabled(False)
+        self.pc_rec_stop_btn.clicked.connect(self.on_pc_record_stop)
+        pcl.addWidget(self.pc_rec_start_btn, 1, 0)
+        pcl.addWidget(self.pc_rec_stop_btn, 1, 1, 1, 2)
+        self.pc_rec_status = QLabel("not recording")
+        self.pc_rec_status.setStyleSheet("color:#8a9098;")
+        pcl.addWidget(self.pc_rec_status, 2, 0, 1, 3)
         v.addWidget(pc)
 
         wheel = QGroupBox("Steering  (one click = one step)")
@@ -484,6 +499,10 @@ class MainWindow(QMainWindow):
 
     def _poll_tick(self):
         self._update_link()
+        with self._pc_rec_lock:
+            if self._pc_rec is not None:
+                self.pc_rec_status.setText(
+                    "recording: %d frames" % len(self._pc_rec["frames"]))
         obs = self.client.obstacles()
         if obs is None:
             fid, circ, connected = 0, [], False
@@ -547,6 +566,89 @@ class MainWindow(QMainWindow):
         else:
             self.log("SEND", "%s (id=%d) mag=%.0f move=%.2fs"
                      % (ACTION_NAMES.get(aid, "?"), aid, mag, dur))
+
+    # ---- manual raw point-cloud recorder --------------------------------
+    def _on_scan_record(self, frame):
+        # Called for every /scan on a rospy thread. Keep this path small so
+        # recording cannot delay subsequent scans.
+        with self._pc_rec_lock:
+            rec = self._pc_rec
+            if rec is None:
+                return
+            rec["frames"].append((
+                frame["frame_id"], frame["timestamp"], frame["ros_frame"],
+                frame["points"], frame["stamp_secs"], frame["stamp_nsecs"]))
+
+    def on_pc_record_start(self):
+        try:
+            os.makedirs(POINTCLOUD_DIR, exist_ok=True)
+        except OSError as exc:
+            self.log("ERR", "point-cloud recording could not start: %s" % exc)
+            return
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
+        path = os.path.abspath(os.path.join(POINTCLOUD_DIR, "scan_%s.npz" % ts))
+        with self._pc_rec_lock:
+            if self._pc_rec is not None:
+                return
+            self._pc_rec = {"path": path, "frames": []}
+        self.pc_rec_start_btn.setEnabled(False)
+        self.pc_rec_stop_btn.setEnabled(True)
+        self.pc_rec_status.setText("recording: 0 frames")
+        self.pc_rec_status.setStyleSheet("color:#e04030; font-weight:bold;")
+        self.log("SEND", "point-cloud recording started -> %s" % path)
+
+    def on_pc_record_stop(self):
+        with self._pc_rec_lock:
+            rec = self._pc_rec
+            self._pc_rec = None
+        if rec is None:
+            return
+        self.pc_rec_stop_btn.setEnabled(False)
+        self.pc_rec_status.setText("saving %d frames..." % len(rec["frames"]))
+        threading.Thread(target=self._save_pointcloud, args=(rec,),
+                         name="pointcloud-save", daemon=False).start()
+
+    def _save_pointcloud(self, rec):
+        try:
+            import numpy as np
+            frames = rec["frames"]
+            counts = np.asarray([len(f[3]) for f in frames], dtype=np.int64)
+            offsets = np.empty(len(frames) + 1, dtype=np.int64)
+            offsets[0] = 0
+            np.cumsum(counts, out=offsets[1:])
+            points = (np.concatenate(
+                [np.asarray(f[3], dtype=np.float32).reshape(-1, 2) for f in frames],
+                axis=0) if offsets[-1] else np.empty((0, 2), dtype=np.float32))
+            np.savez_compressed(
+                rec["path"], points=points, offsets=offsets,
+                frame_ids=np.asarray([f[0] for f in frames], dtype=np.int64),
+                timestamps=np.asarray([f[1] for f in frames], dtype=np.float64),
+                stamp_secs=np.asarray([f[4] for f in frames], dtype=np.int64),
+                stamp_nsecs=np.asarray([f[5] for f in frames], dtype=np.int64),
+                ros_frames=np.asarray([f[2] for f in frames], dtype=str))
+            self.reclog.result.emit({
+                "pointcloud": "saved", "path": rec["path"], "frames": len(frames),
+                "points": len(points)})
+        except Exception as exc:
+            self.reclog.result.emit(
+                {"pointcloud": "failed", "path": rec["path"], "error": str(exc)})
+
+    def _on_recorder_result(self, result):
+        if isinstance(result, dict) and result.get("pointcloud"):
+            ok = result["pointcloud"] == "saved"
+            if ok:
+                msg = "point cloud saved -> %s (%d frames, %d points)" % (
+                    result["path"], result["frames"], result["points"])
+                self.pc_rec_status.setText("saved %d frames" % result["frames"])
+            else:
+                msg = "point-cloud save FAILED: %s" % result["error"]
+                self.pc_rec_status.setText("save failed")
+            self.pc_rec_status.setStyleSheet(
+                "color:#4caf50;" if ok else "color:#e04030;")
+            self.pc_rec_start_btn.setEnabled(True)
+            self.log("SEND" if ok else "ERR", msg)
+        else:
+            self.log("SEND", result)
 
     def on_estop(self):
         self.log("ERR", "E-STOP! estop.sh -> car-ros will be killed")
@@ -793,6 +895,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         if self.mpc is not None and self.mpc.running():
             self.mpc.stop()               # stop a running policy before shutdown
+        if self._pc_rec is not None:
+            self.on_pc_record_stop()       # preserve an active manual recording
+        self.client.on_scan(None)
         self.client.close()
         e.accept()
 
