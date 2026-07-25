@@ -3,6 +3,38 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.3 - 2026-07-25 - cross-tick control continuity: implemented, measured, left OFF
+
+The yaw command reversed sign tick to tick faster than the chassis could follow.
+Cause: `w_smooth` couples steps WITHIN one horizon, but nothing coupled consecutive
+ticks, so each tick's argmin was free to jump anywhere. The standard fix is a term
+penalising the first step's distance from the control already executing.
+
+Implemented as `CostConfig.w_cont` + `Variant1Policy._u_prev`, in the same rate form
+as `w_smooth` so it means the same thing at any tick rate.
+
+**It works at what it was built for, and it is still shipped OFF (`w_cont = 0.0`).**
+
+Offline it looked free -- 10 seeds x 4 realistic scenarios: w_cont 0.6 kept success
+at 1.000 while cutting sign reversals 0.362 -> 0.292 per tick and mean |dw|
+0.450 -> 0.335, and it even lifted the tight suite 0.583 -> 0.708. On the car it
+failed:
+
+    w_cont=0.0   reached 3/3   5.3 s    rev/tick 0.26   |dw| 0.37   yaw pinned 16 %
+    w_cont=0.6   reached 0/2   14.3 s   rev/tick 0.06   |dw| 0.15   yaw pinned 42 %
+
+The smoothing objective was met exactly as designed. The car simply stopped
+reaching B: sluggish to correct, saturating at the yaw cap, both runs timing out.
+
+**Why offline was misleading:** `KinematicSim` has no disturbances (`noise_xy` and
+`dropout` are never set by `eval.run_variant`), so a controller that is slow to
+correct pays nothing there. On the car it must correct against real perturbations
+every tick, and this term is precisely what stops it. That is a sharper statement
+of the sim/real gap already noted in `mpc/README.md`, and it is the concrete reason
+to model disturbance in the sim before tuning anything else on smoothness.
+
+The mechanism is kept, defaulted off, for that work.
+
 ## 0.9.2 - 2026-07-25 - no v-w coupling (my error); yaw DEADBAND found and compensated
 
 **Correction first: there is no v-w coupling.** 0.9.1 reported that forward speed

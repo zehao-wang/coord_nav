@@ -144,6 +144,7 @@ runner **默认只执行第一步再重规划**（`execute_steps=1`，紧闭环 
 | `Variant1Config.w_max` | 1.2 | 偏航上限 → 最小转弯半径 = v/w：mag 40 → **0.30 m** |
 | `MPPIConfig.horizon / dt` | 29 / 1/3 | `dt` **就是一个 tick**（执行的正是第一步）；H·dt ≈ 9.7 s 前视，mag 40 下 ≈3.5 m |
 | `MPPIConfig.noise_tau` | 0.8425 | 采样噪声的 AR(1) 时间常数（**秒**，不是每步），改 tick 率时机动时长不变 |
+| `CostConfig.w_cont` | **0.0(关)** | 惩罚首步与「车正在执行的指令」的差（`w_smooth` 只管 horizon 内部）。离线看着免费，**实车 0/2 到达**（见 CHANGELOG 0.9.3）——仿真无扰动，迟钝不付代价 |
 | `CostConfig.w_track` | 4.17 | 回归 A→B 直线的拉力（太大→绕不开线上的宽墙）|
 | `CostConfig.extra_margin / obs_buffer` | 0.10 / 0.15 | 障碍膨胀额外边距 / 软墙作用范围 |
 
