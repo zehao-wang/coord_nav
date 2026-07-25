@@ -104,8 +104,7 @@ Self-review of the 0.6.2 change set found one real bug and one real redundancy.
 - **BUG: the point cache died permanently after a car-ros restart.** `_opts` was
   pruned by keeping the numerically largest frame_ids
   (`sorted(self._opts)[:-POINT_FRAMES]`). The car's `frame_counter_` restarts at 1
-  whenever car-ros does — which the rplidar watchdog and the GUI's "Restart
-  car-ros" button both do routinely — so every post-restart frame (1, 2, 3 …)
+  whenever the `obstacle_circles` node does, so every post-restart frame (1, 2, 3 …)
   sorted below the retained pre-restart ids (101–104) and was deleted the instant
   it arrived. `observation().points` then returned None **forever**, silently, until
   the client process was restarted. Reproduced against the real callbacks: 7/7
@@ -114,6 +113,13 @@ Self-review of the 0.6.2 change set found one real bug and one real redundancy.
   `obstacle_points(None)` likewise returns the newest *arrived* frame rather than
   `max(id)`. After the fix all 7 post-restart frames pair and the stale ids flush
   within POINT_FRAMES frames.
+  **Reachability, corrected 0.6.5 after live testing:** a full `systemctl restart
+  car-ros` restarts roscore, which drops the client's subscriber registrations
+  entirely (verified live: the pre-existing client timed out, a fresh one paired
+  10/10) — so that path masks the bug behind a reconnect the GUI already handles by
+  self-relaunching. The bug is reachable when the perception node alone restarts
+  while the client keeps running. The fix is right either way; the original claim
+  that the GUI's "Restart car-ros" button triggers it was wrong.
 - **REDUNDANCY: carclient still subscribed to `/scan` for nobody.** Moving the GUI
   to `/obstacle_points` left `scan_points()` with zero callers in the repo, but the
   subscription stayed unconditional in every CarClient — including inside the 4 Hz

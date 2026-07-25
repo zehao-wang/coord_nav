@@ -224,7 +224,7 @@ class CarClient(object):
         fid = int(m.data[0])
         d = m.data
         pts = [(d[i], d[i + 1]) for i in range(1, len(d) - 1, 2)]
-        with self._lock:
+        with self._frame_cv:               # same underlying lock as self._lock
             # Evict by ARRIVAL ORDER, never by frame_id value: the car's
             # frame_counter_ restarts at 1 whenever car-ros does (the watchdog and
             # the GUI's Restart button both do this routinely). Keeping the
@@ -235,6 +235,7 @@ class CarClient(object):
             self._opts.move_to_end(fid)
             while len(self._opts) > self.POINT_FRAMES:
                 self._opts.popitem(last=False)
+            self._frame_cv.notify_all()    # wake wait_frame's points grace period
 
     def obstacle_points(self, frame_id=None):
         """Base-frame points from /obstacle_points as ObsPoints(frame_id, pts, age).
@@ -258,7 +259,14 @@ class CarClient(object):
         pts, t = snap
         return ObsPoints(fid, pts, time.monotonic() - t)
 
-    def wait_frame(self, after=None, timeout=1.0):
+    # A tick fires on /obstacles, but the car publishes /obstacle_points in the same
+    # process() call microseconds later and ROS gives no cross-topic ordering, so the
+    # circles almost always win the race. Without a grace period wait_frame returned
+    # points=None on 24 of 25 real ticks. Measured skew is sub-millisecond; 60 ms is
+    # 18% of a tick and still leaves ~270 ms to plan in.
+    POINTS_GRACE_S = 0.06
+
+    def wait_frame(self, after=None, timeout=1.0, want_points=True):
         """Block until an observation frame OTHER than `after` arrives; return it.
 
         This is the TICK boundary of the whole stack: perception publishes at a
@@ -280,6 +288,16 @@ class CarClient(object):
                 if left <= 0:
                     return None
                 self._frame_cv.wait(left)
+            # The tick fired on the circles; give the matching points their few
+            # hundred microseconds to land so the tick carries a COMPLETE sample.
+            if want_points:
+                fid = snap[0]
+                grace = time.monotonic() + self.POINTS_GRACE_S
+                while fid not in self._opts:
+                    left = grace - time.monotonic()
+                    if left <= 0:
+                        break          # no points for this frame: report it honestly
+                    self._frame_cv.wait(left)
         return self.observation()
 
     def observation(self):
