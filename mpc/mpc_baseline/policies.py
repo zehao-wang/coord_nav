@@ -38,6 +38,7 @@ class Variant1Policy(Policy):
         self.cfg = cfg
         self.rng = np.random.default_rng(seed)
         self._nominal = None                  # (H, 2) warm-start control sequence
+        self._u_prev = None                   # control the car is currently executing
         self._A = None                        # episode start (the A of the A->B line)
 
     @staticmethod
@@ -104,16 +105,19 @@ class Variant1Policy(Policy):
             seqs = self._perturb(nom)                                  # (K, H, 2)
             states = rollout_unicycle(pose, seqs, m.dt)                # (K, H, 3)
             cost, _ = total_cost_velocity(states, seqs, goal, line, obs.field,
-                                          self.cfg.robot, self.cfg.cost, m.dt)
+                                          self.cfg.robot, self.cfg.cost, m.dt,
+                                          self._u_prev)
             b = int(np.argmin(cost))
             best_seq, best_states, nom = seqs[b], states[b], seqs[b]
         self._nominal = np.vstack([best_seq[1:], best_seq[-1:]])       # time-shift warm start
+        self._u_prev = best_seq[0].copy()      # what the car will be running next tick
         return Action.velocity(float(best_seq[0, 0]), float(best_seq[0, 1]),
                                traj=best_states, controls=best_seq)    # full (H,2) horizon
 
     def reset(self):
         self._nominal = None
         self._A = None
+        self._u_prev = None
 
 
 class Variant2Policy(Policy):

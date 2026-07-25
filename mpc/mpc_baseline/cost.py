@@ -73,10 +73,19 @@ def crosstrack_cost(states, line, cost_cfg, dt):
     return cost_cfg.w_track * (ct * ct).sum(axis=1) * dt      # integral, see goal_cost
 
 
-def control_cost(controls, cost_cfg, dt):
+def control_cost(controls, cost_cfg, dt, u_prev=None):
     """Effort + smoothness for the continuous variant: penalise speed, yaw-rate,
     and the STEP-TO-STEP change in each (so the sampled (v,w) plan is gradual, not
-    jerky). controls = (K, H, 2) of [v, w]."""
+    jerky). controls = (K, H, 2) of [v, w].
+
+    `u_prev` is the control the car is CURRENTLY executing (the one this policy
+    returned last tick). Without it, each tick's argmin is free to jump anywhere:
+    w_smooth only couples steps WITHIN one horizon, nothing couples consecutive
+    ticks. Measured on the car, that let the yaw command reverse sign tick to tick
+    (+0.68 / +0.50 / -0.40 / -0.53) faster than the chassis can follow -- the
+    steady-state yaw tracked ~100 % while a real run delivered only 0.608 of the
+    commanded yaw. Penalising the first step's distance from what is already
+    running is the standard fix and costs one term."""
     v, w = controls[:, :, 0], controls[:, :, 1]
     eff = (cost_cfg.w_ctrl_v * (v * v).sum(axis=1)
            + cost_cfg.w_ctrl_w * (w * w).sum(axis=1)) * dt
@@ -84,14 +93,20 @@ def control_cost(controls, cost_cfg, dt):
     # when the step time changes.
     dv, dw = np.diff(v, axis=1), np.diff(w, axis=1)
     smooth = cost_cfg.w_smooth * ((dv * dv).sum(axis=1) + (dw * dw).sum(axis=1)) / dt
+    if u_prev is not None and cost_cfg.w_cont > 0.0:
+        # same RATE form as w_smooth, so it means the same thing at any tick rate
+        d0v = controls[:, 0, 0] - u_prev[0]
+        d0w = controls[:, 0, 1] - u_prev[1]
+        smooth = smooth + cost_cfg.w_cont * (d0v * d0v + d0w * d0w) / dt
     return eff + smooth
 
 
-def total_cost_velocity(states, controls, goal, line, field, robot_cfg, cost_cfg, dt):
+def total_cost_velocity(states, controls, goal, line, field, robot_cfg, cost_cfg,
+                        dt, u_prev=None):
     """Full cost for the CONTINUOUS (v, w) sampling variant 1. Same goal + all-
     obstacle barrier as the discrete variant, plus cross-track (return to the A->B
     line) and control effort/smoothness. Returns (cost (K,), collided (K,))."""
     g = goal_cost(states, goal, cost_cfg, dt)
     o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt)
     return (g + o + crosstrack_cost(states, line, cost_cfg, dt)
-            + control_cost(controls, cost_cfg, dt)), collided
+            + control_cost(controls, cost_cfg, dt, u_prev)), collided

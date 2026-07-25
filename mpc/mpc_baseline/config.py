@@ -100,7 +100,20 @@ class CostConfig:
     extra_margin: float = 0.10        # added to (circle.r + robot_radius) inflation (clearance)
     w_ctrl_v: float = 0.0333          # penalise speed lightly (prefer efficient paths)
     w_ctrl_w: float = 0.25            # penalise yaw-rate (prefer going straight)
-    w_smooth: float = 0.24            # penalise the control RATE of change -> gradual steering
+    w_smooth: float = 0.24            # penalise the control RATE of change WITHIN the horizon
+    w_cont: float = 0.0               # OFF. Penalises the first step's distance from the
+                                      # control the car is ALREADY executing (w_smooth only
+                                      # couples steps within one horizon, nothing couples
+                                      # consecutive ticks). It does smooth the command --
+                                      # measured on the car, sign reversals 0.26 -> 0.06 per
+                                      # tick and mean |dw| 0.37 -> 0.15 at w_cont=0.6 -- but
+                                      # the car then STOPPED REACHING B: 0/2 runs, both timing
+                                      # out at 14.3 s with the yaw pinned at the cap 42 % of
+                                      # ticks, against 3/3 in 5.3 s with it off. Offline it
+                                      # looked free (1.000 success, less jitter) because the
+                                      # sim has no disturbances, so being sluggish costs
+                                      # nothing there. Keep at 0 until the sim models
+                                      # disturbance; the mechanism is kept for that work.
     collision_cost: float = 1.0e6     # hard penalty for a rollout that hits inflation
 
 
