@@ -3,6 +3,46 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.10 - 2026-07-25 - on-car validation: 5 m reached, model fidelity 0.91
+
+The run that closes the day. Variant 1, magnitude 40, B = 5 m ahead, via the GUI,
+battery 9.9 V. `output/2026-07-25_22-05-36-246/`.
+
+    reached True   final distance 0.143 m   16.57 s   51 ticks
+    flags  REACHED=1  WPIN=4        (no ZERO, no NEAR, no STALE, no NOFRAME)
+    gd     5.000 -> 0.143, strictly monotone
+
+**Model fidelity -- what the whole calibration was for:**
+
+    cumulative measured/commanded   translation 0.910   yaw 0.599
+    per-tick translation ratio      median 0.86  (p10 0.69, p90 1.14)
+
+0.910 is the number to keep. The pack was at 9.9 V while the shipped constants were
+measured at 10.5 V, and the voltage model predicts about +10 % of over-prediction
+there -- which is what came out. **The affine plant model and the yaw feedforward
+hold up on the real car**, and the offline figures now have a physical counterpart.
+
+Yaw fidelity 0.599 is the known, non-blocking one: the command changes sign on 31 %
+of ticks and the chassis cannot follow that. It does not stop the car reaching B.
+Fixing it needs a disturbance model in the sim first -- see 0.9.3, where the obvious
+fix looked free offline and went 0/2 on the car.
+
+**Tick health:** dt 0.331 mean (0.225-0.384), **0 skipped frames**, planning 78 ms
+median / 93 ms peak against the 333 ms budget. No MCU wedge across all 51 ticks.
+
+The run's header shows `collision_abort False`: the guard default became True in
+0.9.6 and the GUI instance that flew this run carried that change, so it was
+unchecked in the UI.
+
+### Still open
+
+- **Sensor liveness is only checked at startup.** Both of today's MCU wedges appeared
+  mid-run (0.9.9); the check has to run every tick and estop on a frozen feed.
+- **Yaw tracking 0.599** -- needs the sim disturbance model first.
+- `ZERO` still appears transiently near the goal on some runs (0.9.5).
+- `pwm_per_mps` has never been measured above 10.5 V. Per 0.9.7 that does not matter
+  at magnitude >= 30, so this is low priority.
+
 ## 0.9.9 - 2026-07-25 - the MCU wedge recurs mid-run; estop measured and made verifiable
 
 ### The wedge is not a one-off, and it happens DURING a run
