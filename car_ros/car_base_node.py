@@ -59,7 +59,7 @@ class CarBase(object):
         # in a pure in-place spin but badly under-reports yaw during a forward-arc
         # turn (planner then thinks the car is going straight and spirals off).
         # gyro_sign = IMU z axis vs the odom CCW+ convention (measured OPPOSITE ->
-        # -1, via smoke/calib_gyro.py).
+        # -1, via calibration/calib_gyro.py).
         self.yaw_source = rospy.get_param("~yaw_source", "gyro")   # gyro | encoder
         self.gyro_sign = rospy.get_param("~gyro_sign", -1.0)
         self.gyro_bias = rospy.get_param("~gyro_bias", None)       # rad/s; None = auto

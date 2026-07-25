@@ -12,9 +12,9 @@ This measures the two gains directly, in the regime the controller uses, and
 prints the config values that make model == plant.
 
   roscar
-  python smoke/calib_model.py --test yaw            # in-place, needs no space
-  python smoke/calib_model.py --test linear         # needs ~1.5 m ahead
-  python smoke/calib_model.py --all                 # everything (asks for space)
+  python calibration/calib_model.py --test yaw            # in-place, needs no space
+  python calibration/calib_model.py --test linear         # needs ~1.5 m ahead
+  python calibration/calib_model.py --all                 # everything (asks for space)
 
 Reference is /odom: xy from the encoders (lidar-calibrated scales) and yaw from
 the IMU gyro. Ctrl-C or any error hard-estops.

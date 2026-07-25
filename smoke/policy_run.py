@@ -32,7 +32,7 @@ from mpc_baseline.runner import PolicyRunner
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
-# gyro sign relative to /odom CCW+ convention (from smoke/calib_gyro.py: OPPOSITE)
+# gyro sign relative to /odom CCW+ convention (from calibration/calib_gyro.py: OPPOSITE)
 GYRO_SIGN = -1.0
 
 

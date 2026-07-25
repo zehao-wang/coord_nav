@@ -23,7 +23,7 @@ from typing import Tuple
 class RobotConfig:
     """Chassis geometry and the PWM<->velocity mapping.
 
-    MEASURED on the car with smoke/calib_model.py (2026-07-25), not guessed. The
+    MEASURED on the car with calibration/calib_model.py (2026-07-25), not guessed. The
     plant is AFFINE, not proportional -- the motors do not turn until PWM clears a
     friction threshold:
 

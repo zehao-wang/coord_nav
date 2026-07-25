@@ -65,7 +65,7 @@ def pwm_of_mps(mps, robot):
 
     The motors do not start until PWM passes a friction threshold, so the plant is
     affine, not proportional: measured on the car, v = (PWM - 17.0) / 73.4 with
-    residuals of +-0.003 m/s over PWM 30/40/60 (see smoke/calib_model.py). Adding
+    residuals of +-0.003 m/s over PWM 30/40/60 (see calibration/calib_model.py). Adding
     the offset back is the exact inverse, so the realised wheel speed equals the
     commanded one.
 

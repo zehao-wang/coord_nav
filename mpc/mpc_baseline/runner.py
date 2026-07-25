@@ -7,7 +7,7 @@ as one discrete /drive_action hop.
 
 Pose / progress to B uses **/odom** by default (pose_source="odom"): steady 10 Hz
 with no gaps, real closed-loop feedback. Its yaw comes from the IMU gyro; confirm
-ACCURACY on the ground first with smoke/calib_gyro.py (a propped-up car tells you
+ACCURACY on the ground first with calibration/calib_gyro.py (a propped-up car tells you
 nothing about odom accuracy). pose_source="dead_reckon" integrates the executed
 commands with our kinematics model instead -- immune to odom dropout, at the cost
 of drifting if the model speed differs from reality.
@@ -217,7 +217,7 @@ class PolicyRunner(object):
                 self.cfg.robot.robot_radius, self.cfg.robot.pwm_offset,
                 self.cfg.robot.pwm_per_mps, self.cfg.robot.wz_arm),
             "limits": self._limits_str(),
-            "plant": ("CALIBRATED 2026-07-25 by smoke/calib_model.py at 9.8 V. Re-run the "
+            "plant": ("CALIBRATED 2026-07-25 by calibration/calib_model.py at 10.5 V. Re-run the "
                       "linear test on a charged pack -- pwm_per_mps moves with voltage."),
         })
         self.tick_log_path = getattr(tlog, "path", None)

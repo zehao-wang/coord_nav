@@ -13,7 +13,7 @@ odom yaw from the gyro (car_base_node). Also prints the gyro sign relative to th
 odom CCW+ convention so the on-car integration uses the right sign.
 
     roscar
-    python smoke/calib_gyro.py --deg 90        # CCW ~90 deg in place
+    python calibration/calib_gyro.py --deg 90        # CCW ~90 deg in place
 
 Drives the car (in-place rotation only). Ctrl-C estops.
 """
