@@ -20,9 +20,11 @@ from .kinematics import velocity_to_wheel_pwm
 
 
 class VelocityPulseActuator(object):
-    def __init__(self, client, robot_cfg, pulse_duration=0.65):
+    def __init__(self, client, robot_cfg, pulse_duration=0.65, min_inner_frac=0.0):
         self.client = client
         self.robot = robot_cfg
+        self.min_inner_frac = min_inner_frac   # keeps the yaw feedforward from
+                                               # flipping the inner wheel backwards
         # the car keep-alives each pulse this long; make it > the plan period so a
         # dropped/late next command holds the last velocity briefly, then brakes.
         self.pulse_duration = pulse_duration
@@ -32,7 +34,7 @@ class VelocityPulseActuator(object):
 
     def set_velocity(self, vx, vy, wz):
         """Send one velocity pulse. Body velocity -> wheel PWM -> /drive_wheels."""
-        pwm = velocity_to_wheel_pwm(vx, vy, wz, self.robot)
+        pwm = velocity_to_wheel_pwm(vx, vy, wz, self.robot, self.min_inner_frac)
         self.client.drive_wheels(pwm[0], pwm[1], pwm[2], pwm[3], self.pulse_duration)
 
     def stop(self):

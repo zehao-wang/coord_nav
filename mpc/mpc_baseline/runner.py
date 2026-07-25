@@ -84,8 +84,9 @@ class PolicyRunner(object):
             # The car keep-alives each pulse for tick.action_duration (>1 tick), so a
             # single dropped command holds the last velocity instead of stuttering,
             # and two in a row let it expire and brake.
-            self.act = VelocityPulseActuator(client, cfg.robot,
-                                             pulse_duration=tick.action_duration)
+            self.act = VelocityPulseActuator(
+                client, cfg.robot, pulse_duration=tick.action_duration,
+                min_inner_frac=getattr(cfg, 'min_inner_frac', 0.0))
         else:
             self.act = DriveActionActuator(client)
             # A hop shorter than a tick expires before the next tick supersedes it

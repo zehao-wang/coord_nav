@@ -157,17 +157,73 @@ def test_arc(car, mag, secs, cfg):
         wc = wlim * frac
         pwm = velocity_to_wheel_pwm(v, 0.0, wc, cfg.robot)
         fwd, dyaw, dt, dist = _measure(car, list(pwm), secs)
-        vr, wr = fwd / dt, dyaw / dt
-        print("   cmd v=%.3f w=%+.3f | pwm %s | REAL v=%.3f (%.0f%%) w=%+.3f (%s)"
+        # Speed along the ARC, not the projection on the start heading. Projecting
+        # makes a turning car look slow (it reported 53% at w=1.2) when it is only
+        # travelling on a curve at full speed -- there is no v-w coupling, that
+        # number was a measurement artefact. See test_couple.
+        half = abs(dyaw) / 2.0
+        arc = dist * (half / math.sin(half)) if half > 1e-3 else dist
+        vr, wr = arc / dt, dyaw / dt
+        print("   cmd v=%.3f w=%+.3f | pwm %s | REAL arc-v=%.3f (%.0f%%) w=%+.3f (%s)"
               % (v, wc, np.array2string(pwm, precision=0), vr, 100 * vr / v if v else 0,
-                 wr, ("%.0f%%" % (100 * wr / wc)) if abs(wc) > 1e-6 else "--"))
+                 wr, ("%.0f%%" % (100 * abs(wr / wc))) if abs(wc) > 1e-6 else "--"))
         _settle(car)
+
+
+def test_couple(car, mag, secs, cfg, fracs=(0.0, 0.25, 0.5, 0.75, 1.0)):
+    """v-w COUPLING: hold v and sweep |w|, measuring how much forward speed the
+    turn costs.
+
+    `rollout_unicycle` assumes forward speed is independent of yaw rate. A
+    skid-steering chassis does not work that way -- the wheels scrub sideways in a
+    turn and the car loses ground speed. Measured once at v=0.361: 99% straight,
+    90% at w=0.6, 53% at w=1.2. That is the single largest remaining model error,
+    so this sweeps it properly instead of fitting three points.
+
+    The sign of w alternates so the car weaves around its start instead of
+    spiralling away, and clearance is re-checked before every sample.
+    """
+    print("\n=== COUPLE: forward speed lost to turning (v held, |w| swept) ===")
+    v = C._v_of_pwm(mag, cfg.robot)
+    wlim = min(cfg.w_max, (1.0 - cfg.min_inner_frac) * v / cfg.steer_arm)
+    rows, sign = [], 1.0
+    print("   v held at %.3f m/s, |w| up to %.2f rad/s" % (v, wlim))
+    for fr in fracs:
+        clear = _front_clear(car)
+        if clear < 0.9:
+            print("   clearance %.2f m -- stopping the sweep here" % clear)
+            break
+        wc = sign * wlim * fr
+        pwm = velocity_to_wheel_pwm(v, 0.0, wc, cfg.robot)
+        fwd, dyaw, dt, dist = _measure(car, list(pwm), secs)
+        # forward progress ALONG THE ARC: for a constant-curvature arc of turn
+        # dyaw over chord `dist`, arc length = dist * (dyaw/2) / sin(dyaw/2)
+        half = abs(dyaw) / 2.0
+        arc = dist * (half / math.sin(half)) if half > 1e-3 else dist
+        vr, wr = arc / dt, dyaw / dt
+        rows.append((abs(wc), vr / v if v else 0.0, abs(wr / wc) if abs(wc) > 1e-6 else None))
+        print("   |w| %.2f -> arc speed %.3f m/s (%3.0f%% of v)   yaw %+.3f (%s)"
+              % (abs(wc), vr, 100 * vr / v, wr,
+                 ("%.0f%%" % (100 * abs(wr / wc))) if abs(wc) > 1e-6 else "--"))
+        sign = -sign
+        _settle(car)
+    if len(rows) >= 3:
+        import numpy as _np
+        W = _np.array([r[0] for r in rows]); R = _np.array([r[1] for r in rows])
+        # fit r = 1 - k*w^2 (least squares through the w=0 intercept of 1)
+        m = W > 1e-6
+        k = float(_np.sum((1.0 - R[m]) * W[m] ** 2) / _np.sum(W[m] ** 4))
+        pred = 1.0 - k * W ** 2
+        print("   fit  v_eff = v * (1 - %.3f * w^2)   residuals %s"
+              % (k, _np.array2string(R - pred, precision=3)))
+        return k
+    return None
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--test", choices=["linear", "yaw", "arc"], default=None)
+    ap.add_argument("--test", choices=["linear", "yaw", "arc", "couple"], default=None)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--secs", type=float, default=2.0, help="drive time per sample")
     ap.add_argument("--mags", default="40,60", help="PWM levels, comma separated")
@@ -199,7 +255,7 @@ def main():
           % (cfg.robot.pwm_offset, cfg.robot.pwm_per_mps, cfg.robot.wz_arm,
              cfg.steer_arm))
 
-    k_lin = arm = None
+    k_lin = arm = k_couple = None
     try:
         if args.all or args.test == "yaw":
             arm = test_yaw(car, mags, args.secs)
@@ -207,6 +263,8 @@ def main():
             k_lin = test_linear(car, mags, args.secs)
         if args.all or args.test == "arc":
             test_arc(car, 40.0, args.secs, cfg)
+        if args.all or args.test == "couple":
+            k_couple = test_couple(car, 40.0, args.secs, cfg)
     except BaseException as exc:
         print("\nABORT (%s) -- estop" % type(exc).__name__)
         car.estop()
@@ -224,7 +282,10 @@ def main():
         print("  -> Variant1Config.steer_arm = %.3f   (live_config_v1 copies it to wz_arm)" % arm)
         print("     note this also TIGHTENS the inner-wheel limit |w| <= 0.9*v/steer_arm,")
         print("     which is correct: the old 0.10 let the planner ask for turns the car cannot do.")
-    if not k_lin and not arm:
+    if k_couple:
+        print("  v-w coupling: v_eff = v * (1 - %.3f * w^2)  -> RobotConfig.v_w_couple = %.3f"
+              % (k_couple, k_couple))
+    if not k_lin and not arm and not k_couple:
         print("  (nothing measured)")
 
 

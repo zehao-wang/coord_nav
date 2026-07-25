@@ -94,10 +94,44 @@ def mps_of_pwm(pwm, robot):
     return np.sign(pwm) * mag / robot.pwm_per_mps
 
 
-def velocity_to_wheel_pwm(vx, vy, wz, robot):
+def yaw_feedforward(wz, vx, robot, min_inner_frac=0.0):
+    """Desired yaw rate -> the yaw rate to ASK the mix for.
+
+    Yawing a mecanum chassis scrubs the rollers sideways, which costs a threshold
+    torque of its own. That is NOT covered by the per-wheel friction offset, which
+    only makes each wheel's own speed right. Measured commanded->realised yaw at
+    v=0.361: 0.30 -> 38 %, 0.60 -> 67 %, 0.90 -> 75 %, 1.20 -> 92 %, i.e.
+    w_real = 1.079 * (w_cmd - 0.219). The percentage RISING with magnitude is the
+    signature of a deadband; a time lag would cost the same fraction everywhere.
+
+    Inverting it makes commanded yaw equal achieved yaw, which is what the
+    planner's unicycle rollout already assumes.
+
+    The compensation is then capped so the inner wheel never reverses: at low v the
+    extra yaw would flip it backwards, and a differential-drive car that pivots one
+    wheel is not what the policy planned. At those speeds the car simply cannot
+    deliver the full yaw -- the cap makes the model honest about it rather than
+    commanding something physically unavailable.
+    """
+    dead = getattr(robot, "yaw_deadband", 0.0)
+    gain = getattr(robot, "yaw_gain", 1.0)
+    if dead <= 0.0 and abs(gain - 1.0) < 1e-9:
+        return wz
+    wz = float(wz)
+    if abs(wz) < 1e-9:
+        return 0.0
+    out = wz / gain + dead * np.sign(wz)
+    arm = max(robot.wz_arm, 1e-6)
+    limit = max(0.0, (1.0 - min_inner_frac) * abs(vx) / arm)   # inner wheel >= 0
+    return float(np.sign(out) * min(abs(out), limit)) if limit > 0.0 else 0.0
+
+
+def velocity_to_wheel_pwm(vx, vy, wz, robot, min_inner_frac=0.0):
     """Body velocity (m/s, rad/s) -> clipped wheel PWM [FL, RL, FR, RR] ready for
-    /wheel_cmd, through the affine plant inverse (see pwm_of_mps)."""
-    pwm = pwm_of_mps(mix_to_wheels(vx, vy, wz, robot.wz_arm), robot)
+    /wheel_cmd, through the affine plant inverse (see pwm_of_mps) with the yaw
+    friction feedforward applied first (see yaw_feedforward)."""
+    wz_ff = yaw_feedforward(wz, vx, robot, min_inner_frac)
+    pwm = pwm_of_mps(mix_to_wheels(vx, vy, wz_ff, robot.wz_arm), robot)
     return np.clip(pwm, -robot.wheel_pwm_cap, robot.wheel_pwm_cap)
 
 

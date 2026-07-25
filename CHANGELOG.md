@@ -3,6 +3,47 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.2 - 2026-07-25 - no v-w coupling (my error); yaw DEADBAND found and compensated
+
+**Correction first: there is no v-w coupling.** 0.9.1 reported that forward speed
+fell to 53 % at maximum yaw. That was a measurement artefact of mine: `test_arc`
+projected the displacement onto the START heading, so a car driving a curve at full
+speed looks slow. Measuring along the ARC (chord and turn angle -> arc length), a
+sweep of |w| at fixed v gives 95 / 101 / 101 / 104 / 107 % -- flat. The fitted
+coupling coefficient is -0.047, i.e. noise with the wrong sign.
+`rollout_unicycle`'s assumption that v is independent of w is FINE. `test_arc` now
+reports arc speed.
+
+**What that sweep did find is a yaw DEADBAND.** Commanded -> realised yaw at
+v=0.361: 0.30 -> 38 %, 0.60 -> 67 %, 0.90 -> 75 %, 1.20 -> 92 %, fitting
+`w_real = 1.079 * (w_cmd - 0.219)`. A percentage that RISES with magnitude is a
+deadband; a time lag would cost the same fraction at every magnitude. Physically:
+yawing a mecanum chassis scrubs the rollers sideways, which costs a threshold
+torque of its own -- the per-wheel friction offset cannot cover it, because that
+only makes each wheel's own speed correct.
+
+- New `RobotConfig.yaw_deadband` (0.219 rad/s) and `yaw_gain` (1.079), applied by
+  `kinematics.yaw_feedforward` inside `velocity_to_wheel_pwm`. Re-measured on the
+  car with it active: **106 / 102 / 100 / 111 %** (was 38 / 67 / 75 / 92).
+- The feedforward is capped so the inner wheel never reverses. At low v the extra
+  yaw would flip it backwards, and a differential-drive car that pivots one wheel
+  is not what the policy planned; at those speeds the car genuinely cannot deliver
+  the full yaw and the cap makes that honest instead of commanding the impossible.
+- On the car, variant 1 reached B again (4.29 s, 1.09 m for a 1.2 m goal, yaw
+  -10 deg). Cumulative measured/commanded improved from 0.810 -> **0.961** on
+  translation and 0.451 -> **0.608** on yaw.
+
+**The remaining yaw gap is a different effect and is still open.** The steady-state
+sweep now tracks ~100 %, but a real run only reaches 0.608 because the command
+reverses sign tick to tick (+0.68 / +0.50 / -0.40 / -0.53) faster than the chassis
+can follow. That is rotational lag, not deadband -- the next thing to fix.
+
+**Offline, 20 seeds x 6 scenarios, at the shipped 10.5 V constants:** v2 0.833 /
+0.000, v1 0.583 / 0.408 on the tight built-in suite. v2 was 1.000 at the previous
+(9.8 V) constants: the offset moving 17 -> 14 makes a PWM-40 hop 15 % longer, and
+the tight suite is sensitive to that. The plant genuinely is voltage-dependent and
+one constant set cannot be exact across the pack's range.
+
 ## 0.9.1 - 2026-07-25 - calibration reproduced; variant 1 no longer spirals
 
 Re-ran the calibration at a different battery voltage and finished the on-car

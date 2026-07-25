@@ -49,6 +49,12 @@ class RobotConfig:
     pwm_per_mps: float = 72.1         # MEASURED slope (was a nominal 200)
     pwm_offset: float = 14.0          # MEASURED friction threshold, PWM
     wz_arm: float = 0.196             # MEASURED yaw arm (m); was a nominal 0.5
+    # Yawing scrubs the mecanum rollers sideways, which costs its own threshold
+    # torque on top of the per-wheel friction. MEASURED w_real = 1.079*(w_cmd-0.219)
+    # at v=0.361 (38/67/75/92 % of command at |w| 0.30/0.60/0.90/1.20 -- a rising
+    # percentage is a deadband, a lag would cost the same fraction everywhere).
+    yaw_deadband: float = 0.219       # rad/s that buys no yaw at all
+    yaw_gain: float = 1.079           # slope above the deadband
     wheel_pwm_cap: float = 80.0       # clamp on any wheel PWM (car caps at 100)
     diag_mult: float = 1.6            # diagonal magnitude boost (matches carclient)
     strafe_mult: float = 1.2          # strafe magnitude boost (matches carclient)
