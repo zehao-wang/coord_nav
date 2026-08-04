@@ -130,6 +130,8 @@ class CarClient(object):
         # frame_id -> (points [(x,y),...], monotonic_time). Ordered: evicted by
         # arrival, not by id (the car's frame counter restarts with car-ros).
         self._opts = OrderedDict()
+        # rolling (monotonic, gyro_z) for imu_frozen(); ~2.4 s at the IMU's 10 Hz
+        self._imu_ring = deque(maxlen=24)
 
         if init_node and not rospy.core.is_initialized():
             rospy.init_node("carclient", anonymous=True, disable_signals=True)
@@ -151,6 +153,14 @@ class CarClient(object):
                          self._on_obs_points, queue_size=2)
         rospy.Subscriber("/drive_result", String, self._on_res, queue_size=10)
         rospy.Subscriber("/odom", Odometry, self._on_odom, queue_size=5)
+        # Persistent lightweight IMU tap (~3 KB/s at 10 Hz -- nothing like the
+        # 43 KB/s /scan we dropped) feeding imu_frozen(), the PER-TICK wedge
+        # detector. Both 2026-07-25 MCU wedges struck MID-RUN: the startup
+        # sensors_live() gate passed and the read path died seconds later, wheels
+        # still obeying commands with all feedback frozen. This ring is what lets
+        # the runner notice within a tick instead of driving blind to timeout.
+        from sensor_msgs.msg import Imu
+        rospy.Subscriber("/imu/data_raw", Imu, self._on_imu_tap, queue_size=5)
         self._scan_on = bool(subscribe_scan)
         if self._scan_on:                        # opt-in: ~43 KB/s, see __init__ doc
             rospy.Subscriber("/scan", LaserScan, self._on_scan, queue_size=1)
@@ -412,6 +422,29 @@ class CarClient(object):
         True while every sensor is frozen. Call sensors_live() as well."""
         v = self.battery()
         return v is not None and v > self.MIN_LINK_VOLT
+
+    def _on_imu_tap(self, m):
+        with self._lock:
+            self._imu_ring.append((time.monotonic(), round(m.angular_velocity.z, 9)))
+
+    def imu_frozen(self, window_s=1.2, min_msgs=8):
+        """Is the MCU read path WEDGED *right now*? Non-blocking, call every tick.
+
+        True when the last `window_s` of gyro-z samples are BIT-IDENTICAL. A real
+        gyro dithers even parked (measured: 7-10 distinct values per 30 samples on
+        the still car), so 8+ identical consecutive readings only happen when the
+        serial read path is stuck republishing one value -- the exact signature of
+        both 2026-07-25 wedges. Returns False when healthy OR when there is not
+        enough recent data to judge; "no data at all" is link loss, which
+        link_ok()/stale checks own. Complements sensors_live(), the 3 s blocking
+        startup gate -- this is the cheap per-tick version.
+        """
+        now = time.monotonic()
+        with self._lock:
+            vals = [v for (t, v) in self._imu_ring if now - t <= window_s]
+        if len(vals) < min_msgs:
+            return False
+        return len(set(vals)) == 1
 
     def sensors_live(self, secs=3.0, gyro_still_max=0.05):
         """Is the MCU's READ path actually alive? Call with the car STATIONARY.

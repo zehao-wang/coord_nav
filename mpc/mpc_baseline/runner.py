@@ -322,6 +322,21 @@ class PolicyRunner(object):
                     _stub("LINKLOST")
                     self.client.estop()
                     return self._summary("link_lost_estop", False, goal, t0)
+                # PER-TICK wedge check. Both 2026-07-25 MCU wedges struck MID-RUN
+                # after the startup gate had passed: writes kept reaching the
+                # motors while every sensor froze, so the car drove blind (once
+                # spinning in place, once 44 ticks of commands into a dead plant).
+                # A frozen gyro means no working feedback at all -> hard estop, not
+                # a hold: a hold trusts the next frame, and there won't be one.
+                if self.check_sensors and self.client.imu_frozen():
+                    _stub("WEDGE")   # pose is not read yet this tick -- and a wedged
+                                     # MCU means it would be frozen garbage anyway
+                    tlog.note("SAFETY  MCU read path FROZEN mid-run (gyro bit-identical "
+                              ">1.2 s) -- estop. Power-cycle the car; car-ros restart "
+                              "may not clear it.")
+                    self.log("MCU WEDGE detected -- estop")
+                    self.client.estop()
+                    return self._summary("mcu_wedge_estop", False, goal, t0)
 
                 pose, page = self._read_pose()
                 if (pose is None or obs.age > self.obs_cfg.max_age_stale or

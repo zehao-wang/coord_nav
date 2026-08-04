@@ -3,6 +3,33 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.11 - 2026-08-04 - per-tick MCU wedge detection
+
+Closes the top item left open on 2026-07-25: both MCU wedges struck MID-RUN, after
+the startup `sensors_live()` gate had passed -- the second one left the car driving
+blind for 44 ticks (14.7 s) with `real/cmd x0.00` while the planner kept commanding.
+
+- **`CarClient.imu_frozen(window_s=1.2, min_msgs=8)`** -- non-blocking, backed by a
+  persistent lightweight IMU tap (~3 KB/s at 10 Hz; nothing like the 43 KB/s /scan
+  we dropped). True when the last 1.2 s of gyro-z samples are BIT-IDENTICAL: a real
+  gyro dithers even parked (7-10 distinct values per 30 samples, measured), so 8+
+  identical readings only happen when the serial read path is stuck republishing
+  one value -- the exact signature of both wedges. Not-enough-data and
+  stale-messages both return False: startup must not false-trip, and "no messages"
+  is link loss, which link_ok()/stale checks own.
+- **The runner checks it EVERY TICK** (under the existing `check_sensors` switch),
+  before anything reaches the wheels. A hit emits a `WEDGE` tick-log line and hard
+  estops -- not a hold, because a hold trusts the next frame and there will not be
+  one. The estop fast path (raw-PWM zeros on /wheel_cmd) works precisely in this
+  failure mode: the wedge kills the READ path while writes still reach the motors.
+- Detection latency, verified with realistic 10 Hz timestamps: **fires 1.2 s after
+  freeze onset = 3.6 ticks** (~0.43 m at v_max). Against 44 ticks of blind driving
+  last time. Verified against the recorded wedge signature (fires), the healthy
+  stationary capture (does not), startup with 4 samples (does not), and a stalled
+  ring (does not -- that is link loss).
+
+Offline suite unchanged: v1 1.000, v2 0.833.
+
 ## 0.9.10 - 2026-07-25 - on-car validation: 5 m reached, model fidelity 0.91
 
 The run that closes the day. Variant 1, magnitude 40, B = 5 m ahead, via the GUI,

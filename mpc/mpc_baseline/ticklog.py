@@ -103,6 +103,8 @@ class TickLog(object):
         w("#   NEAR    an obstacle edge is within robot_radius of the car CENTRE\n")
         w("#   SAFETY  not a flag: a free-text note line when an interlock fired\n")
         w("#   NOFRAME no observation frame arrived in time (the car was stopped)\n")
+        w("#   WEDGE   MCU read path froze MID-RUN (gyro bit-identical >1.2 s): the\n")
+        w("#            motors still obey but ALL feedback is dead -> hard estop.\n")
         w("#   STALE / COLLIDE / LINKLOST / ABORT / TIMEOUT / REACHED: the tick took that\n")
         w("#            branch and ended there. EVERY tick emits exactly one line, so a\n")
         w("#            gap in the numbering means the loop stopped -- never that a\n")
