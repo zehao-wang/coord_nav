@@ -45,7 +45,24 @@ import pymunk
 
 from . import config as C
 from .eval import resolve_policy
+from .obstacles import ObstacleField
 from .sim import KinematicSim, World, run_episode
+
+
+def _visible(circles, pose, sense_range, occlusion):
+    """Indices of world circles the lidar can currently see (range + occlusion,
+    no stochastic knobs) -- the deterministic core of DynamicSim.sense, shared
+    with the animation's tracker replay."""
+    px, py, _ = pose
+    out = []
+    for i in range(len(circles)):
+        wx, wy, r = circles[i]
+        if np.hypot(wx - px, wy - py) - r > sense_range:
+            continue
+        if occlusion and _centre_occluded(circles, i, px, py):
+            continue
+        out.append(i)
+    return out
 
 # A test-field case. static: ((x, y, r), ...) fixed circles. dynamic:
 # ((x, y, r, vx, vy), ...) pymunk bodies launched with that velocity. arena:
@@ -182,15 +199,12 @@ class DynamicSim(KinematicSim):
         out = []
         px, py, pth = self.pose
         c, s = np.cos(-pth), np.sin(-pth)
-        for i in range(len(self.circles)):
+        for i in _visible(self.circles, self.pose, self.sense_range,
+                          self.occlusion):
             wx, wy, r = self.circles[i]
-            dx, dy = wx - px, wy - py
-            if np.hypot(dx, dy) - r > self.sense_range:
-                continue
-            if self.occlusion and _centre_occluded(self.circles, i, px, py):
-                continue
             if self.dropout and self.rng.random() < self.dropout:
                 continue
+            dx, dy = wx - px, wy - py
             bx = c * dx - s * dy
             by = s * dx + c * dy
             if self.noise_xy:
@@ -343,11 +357,40 @@ def animate_case(spec, case, path, seed=0, goal_dist=3.0, disturbed=True,
     """Run one episode and render it frame-by-frame (one frame per tick, fps=6 is
     2x real time). `.mp4` uses ffmpeg, anything else Pillow (gif). Obstacles the
     car cannot currently see (range/occlusion) render hollow -- watching an
-    occluded mover pop into view is the point of half these cases. Returns
-    (EpisodeResult, path)."""
+    occluded mover pop into view is the point of half these cases.
+
+    For a TIME-AWARE policy (cfg.predict_obstacles) the frames also show what
+    the planner is actually scoring against: a purple velocity arrow per
+    tracked mover and dashed ghost circles at the tracker's +1 s / +2 s
+    constant-velocity predictions. The tracker is REPLAYED from the recorded
+    history through the same ObstacleField code (deterministic as long as the
+    perception noise knobs are 0 -- with noise/dropout enabled the overlay is
+    skipped rather than shown wrong). Returns (EpisodeResult, path)."""
     p = perception or PerceptionConfig()
     res, hist = run_case(spec, case, seed=seed, goal_dist=goal_dist,
                          disturbed=disturbed, perception=p, keep_history=True, **kw)
+
+    snaps = None
+    _, _cfg, _ = resolve_policy(spec, goal_dist=goal_dist, disturbed=disturbed,
+                                magnitude=kw.get("magnitude", 40.0))
+    if getattr(_cfg, "predict_obstacles", False) and not p.noise_xy and not p.dropout:
+        clk = {"t": 0.0}
+        field = ObstacleField(kw.get("obs_cfg") or C.ObstacleConfig(),
+                              lambda: clk["t"])
+        snaps = []
+        for (t, circles, pose) in hist:
+            clk["t"] = t
+            px, py, pth = pose
+            cth, sth = np.cos(-pth), np.sin(-pth)
+            base = []
+            for i in _visible(circles, pose, p.sense_range, p.occlusion):
+                dx, dy = circles[i][0] - px, circles[i][1] - py
+                base.append((cth * dx - sth * dy, sth * dx + cth * dy,
+                             circles[i][2]))
+            field.update(base, pose)
+            snaps.append((field.circles(), field.velocities(),
+                          field.predict([1.0, 2.0])))
+
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -371,6 +414,20 @@ def animate_case(spec, case, path, seed=0, goal_dist=3.0, disturbed=True,
             ax.add_patch(plt.Circle((cx, cy), r, color="tab:red" if dyn else "0.4",
                                     alpha=0.5 if seen else 0.15,
                                     fill=seen, lw=1.5))
+        if snaps is not None:
+            mem, vel, pred = snaps[k]
+            for i in range(len(mem)):
+                vx, vy = vel[i]
+                if vx == 0.0 and vy == 0.0:
+                    continue
+                ax.arrow(mem[i, 0], mem[i, 1], vx, vy, head_width=0.06,
+                         color="tab:purple", alpha=0.9,
+                         length_includes_head=True)
+                for j, a in ((0, 0.45), (1, 0.22)):     # +1 s / +2 s ghosts
+                    ax.add_patch(plt.Circle(
+                        (pred[j, i, 0], pred[j, i, 1]), pred[j, i, 2],
+                        fill=False, ls="--", lw=1.2, color="tab:purple",
+                        alpha=a))
         tr = res.traj[:k + 1]
         ax.plot(tr[:, 0], tr[:, 1], "-", color="tab:blue", lw=1, alpha=0.7)
         ax.add_patch(plt.Circle((pose[0], pose[1]), 0.13, color="tab:blue", alpha=0.6))
