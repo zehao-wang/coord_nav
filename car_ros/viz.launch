@@ -19,7 +19,17 @@
   <!-- The MCU already takes +x as forward, matching ROS, so no flip. -->
   <arg name="invert_drive" default="false"/>
 
-  <node name="car_base" pkg="car_base" type="car_base_node.py" output="screen">
+  <!-- respawn: the ch341 USB-serial adapter drops off the bus spontaneously
+       (dmesg 2026-08-04: four re-enumerations, one 36 s after boot while IDLE;
+       marginal contact, correlates with motor vibration when driving). When it
+       drops, this node's serial fd goes stale and the node DIES on the next write
+       (Errno 5); without respawn the whole drive stack then stays down until a
+       human intervenes, and mid-drive the MCU latches the last PWM (no firmware
+       timeout) until car_base returns and the keep-alive resumes. Respawn shrinks
+       that window from "forever" to ~2-3 s; the workstation-side per-tick wedge
+       monitor (carclient.imu_frozen) covers the freeze-without-death case. -->
+  <node name="car_base" pkg="car_base" type="car_base_node.py" output="screen"
+        respawn="true" respawn_delay="2">
     <param name="port" value="$(arg base_port)"/>
     <param name="base_frame" value="base_footprint"/>
     <param name="invert_drive" value="$(arg invert_drive)"/>

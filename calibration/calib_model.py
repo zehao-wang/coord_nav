@@ -84,6 +84,17 @@ def _measure(car, wheels, secs):
             yaw_acc += math.atan2(math.sin(p.yaw - last), math.cos(p.yaw - last))
             last = p.yaw
     p1 = car.pose()
+    # A wedge DURING a sample silently corrupts it: the frozen gyro stops the yaw
+    # integral mid-spin, under-reading the rate with no other symptom. That is
+    # exactly how the 2026-08-04 PWM-60 sample read 2.66 rad/s instead of ~3.5 and
+    # nearly poisoned the fit -- the wedge was only noticed when the NEXT test's
+    # startup gate refused to drive. Check after every sample and abort loudly.
+    if car.imu_frozen():
+        car.stop()
+        raise RuntimeError(
+            "MCU read path FROZE during this sample -- the measurement is invalid "
+            "and every later one would be too. Power-cycle the car (car-ros restart "
+            "may not clear it) and re-run; discard this whole session's data.")
     dx, dy = p1.x - p0.x, p1.y - p0.y
     fwd = dx * math.cos(p0.yaw) + dy * math.sin(p0.yaw)
     return fwd, yaw_acc, dt, math.hypot(dx, dy)

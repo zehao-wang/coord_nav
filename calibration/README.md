@@ -60,8 +60,13 @@ python calibration/calib_model.py --all --mags 30,40,60 --secs 1.5
 
 ```
  9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194     拟合残差 ±0.003 m/s
-10.5 V : pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198     ← 当前配置(config 的 wz_arm = 两次中值 0.196)
+10.5 V : pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198     ← 当前配置(config 的 wz_arm = 0.196)
+11.1 V : pwm_per_mps 68.4, pwm_offset 13.2, arm 0.194     拟合残差 ±0.003 m/s
 ```
+
+**第三个点验证了外推**:两点模型预测 v@mag40 = 0.403,11.1 V 实测 0.393(差 2.5%)。
+arm 三连 0.194/0.198/0.194 —— 几何常数盖章。三点灵敏度:dk/dV ≈ −3.8,doff/dV ≈ −3.0。
+详见 [`results/2026-08-04_11.1V.md`](results/2026-08-04_11.1V.md)。
 
 斜率只差 **1.8%**、臂长差 **2%**;动得最多的是**摩擦阈值**(17→14,电压高时更低的 PWM 就能破静摩擦)。
 

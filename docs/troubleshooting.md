@@ -27,7 +27,7 @@
 | 重启 car-ros 后客户端收不到数据了 | 正常:roscore 一起重启,订阅注册失效,客户端必须**重连**。GUI 会自行重启 |
 | 发了指令但车不动 | 幅值低于摩擦阈值(~14 PWM)。**mag 20 几乎不动**,实用值 40。见 [`calibration/`](../calibration/README.md) |
 | `MCU link not healthy -- refusing to drive` | `/battery_v` 还没到(客户端刚建、等一两秒),或电压真的低。`link_ok()` 阈值 6.0 V |
-| `MCU sensors are not live -- refusing to drive` | **MCU 串口读通道卡死**:写还通、读冻结。所有 MCU 话题定在同一个值,陀螺卡住 → odom yaw 静止时也会以 ~60°/s 爬升,而 `link_ok()` 照样返回 True(它只看电压是否合理,一个冻住的 10.00 V 也合理)。**轮子仍会响应指令**,车会在原地转。**断电重启**,重启 car-ros 不一定能清掉。自查:`CarClient.sensors_live()`(启动时)/ `imu_frozen()`(runner 每 tick 自动查,冻结即急停,tick log 记 `WEDGE`)|
+| `MCU sensors are not live -- refusing to drive` | **MCU 串口读通道卡死**:写还通、读冻结。所有 MCU 话题定在同一个值,陀螺卡住 → odom yaw 静止时也会以 ~60°/s 爬升,而 `link_ok()` 照样返回 True(它只看电压是否合理,一个冻住的 10.00 V 也合理)。**轮子仍会响应指令**,车会在原地转。**根因(2026-08-04 确认)**:ch341 USB 串口适配器自发掉线重枚举(接触不良,驱动振动加剧)——`dmesg | grep ch341` 看重枚举记录。掉线后 car_base 的 fd 变死:读冻结或写 EIO 节点亡(现已 `respawn="true"` 自愈)。**物理修复:重新插拔/换线**;断电重启只是碰运气,重启 car-ros 在设备刚重枚举后有效。自查:`CarClient.sensors_live()`(启动时)/ `imu_frozen()`(runner 每 tick 自动查,冻结即急停,tick log 记 `WEDGE`)|
 
 ## 控制表现不对
 

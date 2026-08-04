@@ -34,7 +34,10 @@ class RobotConfig:
 
         9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194
         10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- shipped k/offset
-                (wz_arm/steer_arm ship at 0.196, the midpoint of the two arms)
+        11.1 V: pwm_per_mps 68.4, pwm_offset 13.2, arm 0.194
+                (wz_arm/steer_arm ship at 0.196, mid of the three arms; the third
+                point validated the voltage extrapolation to 2.5 % at magnitude 40,
+                so the 10.5 V k/offset stay -- the closed loop absorbs the rest)
 
     Voltage sensitivity is therefore SMALL for the slope (1.8 %) and for the arm
     (2 %), and larger for the friction threshold (17 -> 14 PWM: more torque is
