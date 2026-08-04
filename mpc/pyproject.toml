@@ -9,6 +9,7 @@ description = "MPC baseline policy (two variants) for the Jetson mecanum car, wo
 requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.20",   # both variants are pure-numpy sampling MPC (no solver dep)
+    "pymunk>=6.5",   # TestField dynamic obstacles (rigid 2D bodies, elastic bounces)
 ]
 # Live driving also needs the sibling `carclient` package (pip install -e carclient)
 # and a ROS env (roscar). The planner/sim/eval need only the deps above.

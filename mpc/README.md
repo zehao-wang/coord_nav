@@ -30,20 +30,20 @@ python scripts/benchmark.py --suite realistic --disturbed   # 真实机制 + 执
 | 套件 | 模式 | 变种2 `mpc_grid` 成功/碰撞 | 变种1 `mpc_vw` 成功/碰撞 |
 |---|---|---|---|
 | 紧（内置） | 默认 | 0.833 / **0.000** | 0.725 / 0.275 |
-| 紧（内置） | `--disturbed` | **1.000 / 0.000** | 0.492 / **0.500** |
+| 紧（内置） | `--disturbed` | **1.000 / 0.000** | 0.475 / **0.517** |
 | 真实 `--suite realistic` | 默认 | **1.000 / 0.000** | **1.000 / 0.000** |
-| 真实 `--suite realistic` | `--disturbed` | **1.000 / 0.000** | 0.950 / 0.025 |
+| 真实 `--suite realistic` | `--disturbed` | **1.000 / 0.000** | 0.925 / 0.025 |
 
 > **碰撞 = 障碍表面碰到车身足迹**（0.9.15 起），和实车 guard 同一判据。旧表用的是
 > "足迹**圆心**进圈"才算碰 —— 障碍表面嵌进车身 12cm 仍记"成功"，v1 紧套件旧数字
-> 0.992/0.008、0.767/0.167 在真实判据下就是上表的 0.725/0.275、0.492/0.500（不是退化，
-> 是同一批轨迹换了诚实的尺子）；v2 在两种判据下都是 0 接触，结论反而更硬。
+> 0.992/0.008、0.767/0.167 换成诚实的尺子就是上表这一列（不是退化，是同一批轨迹重新量；
+> disturbed 行还叠了 0.9.16 的"零指令=刹车"修正）；v2 在两种判据下都是 0 接触，结论反而更硬。
 
 > **`--disturbed` 是实车忠实评估**:实测执行扰动(偏航一阶滞后 τ=0.48s + 速度噪声,
 > 从 298 个实车 tick 拟合)+ runner 的缓冲 tick 循环,离散策略也按实车 1/3s tick
 > 执行与 rollout(0.9.15 前这条路径误用 0.5s 的 2Hz 节奏,车上从不存在)。**任何平滑性/
 > 稳健性调参必须用它筛** —— 完美执行的默认仿真曾把 w_cont 误判为免费(实车 0/2)。扰动下
-> 变种1 因偏航滞后在紧场景剐障碍(0.500),这是"偏航跟踪 0.6"的可测代价;全向平移的
+> 变种1 因偏航滞后在紧场景剐障碍(0.517),这是"偏航跟踪 0.6"的可测代价;全向平移的
 > 变种2 不吃这个滞后,是扰动下更稳健的 baseline。
 
 > **v2 的"默认"两行是确定性的**:动作集穷举(8⁴ ≤ cap)不抽 RNG、无扰动仿真无噪声,
@@ -54,7 +54,7 @@ python scripts/benchmark.py --suite realistic --disturbed   # 真实机制 + 执
 > 变种1 在内置紧场景（障碍 0.5m、B=1m）失败**不是退化**：那些场景要求的转弯半径超出车的
 > 物理能力,套件是刻意的压力测试。**真实驾驶机制**(B=3m、障碍 1.2–1.5m)即
 > `--suite realistic`,0.9.15 起已提交进仓库(`sim.realistic_scenarios` —— 此前这一行
-> 出自从未提交的临时场景,别人无法复现)：足迹判据下仍是 1.000 / 0 接触,扰动下 0.950/0.025。
+> 出自从未提交的临时场景,别人无法复现)：足迹判据下仍是 1.000 / 0 接触,扰动下 0.925/0.025。
 >
 > ⚠️ **默认**（不带 `--disturbed`）仍是完美执行的世界:planner 的积分器就是"真值",
 > 无执行噪声、无缓冲延迟 —— 这些数字只说明"规划逻辑自洽 + 模型已标定"。
@@ -63,6 +63,40 @@ python scripts/benchmark.py --suite realistic --disturbed   # 真实机制 + 执
 >
 > 回归测试:`cd mpc && python -m pytest tests/ -q`(seed 贯通、足迹碰撞判据、disturbed
 > 的 tick 对齐 —— 每一条都是踩过一次的坑)。
+
+### 测试场 TestField（动态障碍 + 遮挡，输入与真机一致）
+```bash
+python scripts/run_field.py                     # 两个 baseline：5 原型 + 10 随机 case × 20 seeds
+python scripts/run_field.py --policy my_model   # 你的模型即插即用（registry 注册后）
+python scripts/run_field.py --anim /tmp/anims   # 每 case 逐帧动画（gif；--anim-fmt mp4）
+python scripts/run_field.py --mem 0             # 只用当前帧规划（量化记忆尾迹）
+```
+
+`mpc_baseline/testfield.py`。场地**默认实车忠实**（和 benchmark 默认完美执行相反）：
+喂给 policy 的输入和 `PolicyRunner` 实车同构 —— 同一个 `Observation` 契约与
+`ObstacleField` 记忆代码、3Hz tick、缓冲一拍派发 + 死区补偿、实测执行扰动，外加
+**遮挡**（到障碍圆心的射线被别的障碍挡住就看不见 —— 旧仿真是透视的）。动态障碍是
+pymunk 刚体（弹性互撞/撞墙反弹，随机 case 物理自洽、seed 可复现）；车不进物理引擎，
+仍走标定的运动学。碰撞判据与静态套件/实车 guard 相同。`--perfect-exec` 关扰动（只用于
+调试）；感知噪声 `--noise-xy/--dropout` 是**未标定旋钮**，默认 0（可从 run.json 的实录
+帧拟合，待做）。已知与真机的差距：位姿无漂移、无扫描-位姿时间戳偏斜。
+
+当前 baseline 在测试场（15 cases × 20 seeds = 300 局/策略，`--seeds/--random/--rand-seed`
+默认即协议）：
+
+| 配置 | 变种2 成功/碰撞 | 变种1 成功/碰撞 |
+|---|---|---|
+| 默认（实车忠实） | 0.757 / 0.243 | 0.530 / 0.437 |
+| `--mem 0` 只看当前帧 | **0.837 / 0.163** | 0.580 / 0.380 |
+| `--perfect-exec` | 0.867 / 0.133 | 0.557 / 0.443 |
+
+> 三个发现：**(1) 两个 baseline 对拦截型动态障碍都不稳健** —— rollout 把障碍当静止，
+> `cross_slow`（慢速横穿拦截）v2 碰 0.85、v1 1.00 全灭；这是静态套件盖住的真实能力
+> 缺口，也是测试场存在的意义。**(2) 1.5s 障碍记忆在动态世界是负资产**：`--mem 0` 反而
+> 更安全（v2 碰撞 0.243→0.163、v1 0.437→0.380）——移动障碍在 odom 记忆里拖出旧位置
+> 尾迹，把软墙钉在障碍早已离开的地方。**(3) v1 的动态碰撞主要不是执行扰动造成的**
+> （`--perfect-exec` 下仍 0.443）——是"对着上一帧的世界规划"本身。要在动态场里赢，
+> policy 需要估计障碍速度并外推（Observation 里有连续帧可差分，接口不用改）。
 
 ### GUI（推荐，实车）
 ```bash
@@ -129,6 +163,7 @@ python scripts/run_sim.py --policy my_model --all                # 全场景表
 python scripts/run_sim.py --policy my_model --scenario slalom --plot /tmp/m.png
 python scripts/benchmark.py --policy my_model                    # 和两个 baseline 同表对比
 python scripts/benchmark.py --policy my_model --plan-dt 0.333    # 按实车节奏比
+python scripts/run_field.py --policy my_model                    # 动态障碍测试场（见上）
 ```
 ```python
 from mpc_baseline import eval as E
@@ -218,7 +253,9 @@ planner 的模型必须和真车一致,否则闭环性能靠运气。**被控对
 | `mpc_baseline/cost.py` | 共用代价：到 B + 全障碍软墙 + cross-track + 平滑 |
 | `mpc_baseline/kinematics.py` / `obstacles.py` / `mppi.py` | 麦轮混合 & rollout / odom 障碍记忆 & 间隙查询 / 采样 |
 | `mpc_baseline/runner.py` | 实车闭环 `PolicyRunner`：驱动**任意** Policy，规划/驱动/安全 |
-| `mpc_baseline/sim.py` / `eval.py` | 离线运动学仿真 + 场景 / 指标汇总对比 |
+| `mpc_baseline/sim.py` / `eval.py` | 离线运动学仿真 + 场景 / 指标汇总对比（`resolve_policy` 是唯一的 policy 构造入口）|
+| `mpc_baseline/testfield.py` | **测试场**：pymunk 动态障碍 + 遮挡 + 实车忠实闭环，任意注册 policy 即插即用 |
+| `scripts/run_field.py` | 测试场 CLI：battery / 随机 case / `--mem` 消融 / 逐帧动画 |
 | `mpc_baseline/actuators.py` | `VelocityPulseActuator`(变种1) / `DriveActionActuator`(变种2) |
 | `scripts/` `../smoke/` | `run_sim`·`benchmark`·`run_live`·`calibrate_goal` / `policy_run`·`calib_gyro` |
 

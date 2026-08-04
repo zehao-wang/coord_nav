@@ -80,6 +80,17 @@ def test_disturbed_discrete_policy_rolls_out_at_the_executed_tick():
     assert captured["cfg"].rollout_dt == pytest.approx(C.TickConfig().period)
 
 
+def test_disturbed_forces_live_tick_for_velocity_policies_too():
+    # runner parity: disturbed mode must plan AND execute at the tick even for a
+    # cfg whose mppi.dt is something else (a third-party policy's config)
+    policy, cfg, dt = E.resolve_policy("mpc_vw", disturbed=True, goal_dist=3.0)
+    assert dt == pytest.approx(C.TickConfig().period)
+    assert cfg.mppi.dt == pytest.approx(C.TickConfig().period)
+    _, cfg2, dt2 = E.resolve_policy(1, disturbed=True)
+    assert dt2 == pytest.approx(C.TickConfig().period)
+    assert cfg2.mppi.dt == pytest.approx(C.TickConfig().period)
+
+
 def test_disturbed_v2_executes_at_the_live_tick():
     # run_variant(2, disturbed=True) is the README's "live-faithful" row: it must
     # close the loop at the car's tick period, not step_duration (0.5 s = a 2 Hz

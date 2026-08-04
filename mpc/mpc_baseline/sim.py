@@ -56,7 +56,14 @@ class KinematicSim(object):
         """Advance the true pose by one body-velocity command held for dt,
         through the execution-disturbance model if one is configured."""
         vb = np.asarray(body_vel, dtype=float).copy()
-        if self.dist is not None:
+        if self.dist is not None and not np.any(vb):
+            # An all-zero command is a BRAKE pulse on the car (the runner's hold
+            # path): the wheels clamp and the car keeps its heading. The fitted
+            # disturbance describes DRIVING ticks -- injecting yaw noise here made
+            # a stopped car random-walk ~60 deg/10 s, penalizing stop-and-wait
+            # policies the real car does not penalize.
+            self._w_exec = 0.0
+        elif self.dist is not None:
             d = self.dist
             # multiplicative speed noise (translation axes together: the fit is on
             # the arc speed, and vx/vy come from the same four wheels)

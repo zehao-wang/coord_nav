@@ -72,6 +72,62 @@ def _seed_policy(policy, seed):
         policy.rng = np.random.default_rng(seed)
 
 
+def resolve_policy(spec, live=False, goal_dist=1.0, goal_y=0.0, magnitude=40.0,
+                   step_duration=0.5, plan_dt=None, disturbed=False, seed=0):
+    """THE one place a policy spec becomes (policy, cfg, dt) for offline eval.
+
+    `spec` is 1/2 (built-in variants; `live` picks sim vs live profile) or any
+    POLICY_REGISTRY key (built through build_policy at `magnitude`, then seeded).
+    Registry keys are matched FIRST and VERBATIM (see run_variant for why), and
+    anything unknown raises instead of silently running variant 2.
+
+    Shared by run_variant, run_policy and the TestField so the seed plumbing and
+    the disturbed-mode dt rules cannot drift apart again: dt is the policy's own
+    control period (mppi.dt / step_duration) undisturbed, and the LIVE TICK for
+    every policy when disturbed -- where a discrete policy also gets rollout_dt
+    set, because the buffered loop executes one tick of each hop (runner parity).
+    """
+    s = str(spec)
+    if s in POLICY_REGISTRY:
+        policy, cfg = build_policy(s, magnitude, goal_dist, goal_y=goal_y,
+                                   step_duration=step_duration)
+        _seed_policy(policy, seed)
+        cfg.goal.goal_dist = goal_dist
+        cfg.goal.goal_y = goal_y
+        if disturbed:
+            # runner parity for ANY registry policy: the executed step is one
+            # live tick, and the policy's model step must BE that tick (the
+            # runner overwrites mppi.dt/rollout_dt the same way). Without this,
+            # a third-party cfg with mppi.dt != 1/3 ran the "live-faithful"
+            # mode at a cadence the car never runs.
+            dt = plan_dt if plan_dt is not None else C.TickConfig().period
+            if getattr(policy, "action_space", None) == "discrete":
+                cfg.rollout_dt = dt
+            if getattr(cfg, "mppi", None) is not None:
+                cfg.mppi.dt = dt
+        else:
+            dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
+        return policy, cfg, dt
+    v = s.lower()
+    if v not in _V1 and v not in _V2:
+        _cfg_for(spec, live, goal_dist)          # raises with the full message
+    cfg = _cfg_for(spec, live, goal_dist)
+    cfg.goal.goal_y = goal_y
+    is_v1 = v in _V1
+    if disturbed:
+        dt = plan_dt if plan_dt is not None else C.TickConfig().period
+        if is_v1:
+            cfg.mppi.dt = dt              # runner parity (a no-op at the shipped 1/3)
+        else:
+            cfg.rollout_dt = dt
+    else:
+        dt = plan_dt if plan_dt is not None else (
+            cfg.mppi.dt if is_v1 else cfg.step_duration)
+    policy = (Variant1Policy(cfg, seed=seed) if is_v1
+              else Variant2Policy(cfg, seed=seed))
+    return policy, cfg, dt
+
+
 def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
                 obs_cfg=None, seed=0, sense_range=3.0, plan_dt=None,
                 disturbed=False):
@@ -107,33 +163,17 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
 
     scenarios = scenarios if scenarios is not None else default_scenarios(goal_dist)
     obs_cfg = obs_cfg or C.ObstacleConfig()
-    cfg = _cfg_for(variant, live, goal_dist)
-    is_v1 = v in _V1
-    if is_v1:
-        dt = plan_dt if plan_dt is not None else cfg.mppi.dt
-    else:
-        # Disturbed = the buffered LIVE loop: one TICK of each hop executes before
-        # the next supersedes it, so the execution step must be the tick period and
-        # the policy must roll out at it too (runner.py sets rollout_dt the same
-        # way). This row used to run at step_duration=0.5 s -- a 2 Hz cadence the
-        # car never runs, with per-1/3s-tick-fitted noise injected per 0.5 s step.
-        # Undisturbed keeps the unbuffered semantics: each hop runs its own life.
-        dt = plan_dt if plan_dt is not None else (
-            C.TickConfig().period if disturbed else cfg.step_duration)
-        if disturbed:
-            cfg.rollout_dt = dt
-
     dist = C.DisturbanceConfig() if disturbed else None
     results = []
     for world in scenarios:
+        # resolve_policy per scenario = fresh policy AND fresh cfg each episode,
+        # with the seed and disturbed-dt rules applied in the one shared place.
+        policy, cfg, dt = resolve_policy(variant, live=live, goal_dist=goal_dist,
+                                         plan_dt=plan_dt, disturbed=disturbed,
+                                         seed=seed)
         sim = KinematicSim(world, sense_range=sense_range,
                            robot_radius=cfg.robot.robot_radius, seed=seed,
                            disturbance=dist)
-        # seed BOTH variants: Variant1Policy was getting the default 0 every time, so
-        # run_variant(seed=N) only varied the simulator and the documented multi-seed
-        # protocol was a no-op through this API.
-        policy = (Variant1Policy(cfg, seed=seed) if is_v1
-                  else Variant2Policy(cfg, seed=seed))
         results.append(run_episode(sim, policy, variant, obs_cfg, cfg.goal,
                                    plan_dt=dt, robot_cfg=cfg.robot,
                                    buffered=disturbed))
@@ -158,23 +198,19 @@ def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
     run_variant(1) defaults to the SIM profile -- their numbers differ. Use
     run_variant(1, live=True) to compare like with like.
     """
+    if str(policy_key) not in POLICY_REGISTRY:
+        raise KeyError("unknown policy %r; registered: %s"
+                       % (policy_key, ", ".join(sorted(POLICY_REGISTRY)) or "(none)"))
     scenarios = scenarios if scenarios is not None else default_scenarios(goal_dist)
     obs_cfg = obs_cfg or C.ObstacleConfig()
 
     results = []
     for world in scenarios:
-        policy, cfg = build_policy(policy_key, magnitude, goal_dist, goal_y=goal_y,
-                                   step_duration=step_duration)
-        _seed_policy(policy, seed)
-        cfg.goal.goal_dist = goal_dist
-        cfg.goal.goal_y = goal_y
-        dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
-        if disturbed and getattr(policy, "action_space", None) == "discrete":
-            # Buffered loop executes one dt of each hop -- the policy must roll out
-            # at dt, not step_duration, or it predicts every hop 50% longer than
-            # what runs (the exact model error runner.py:rollout_dt exists to fix;
-            # it had quietly survived on this offline screening path).
-            cfg.rollout_dt = dt
+        policy, cfg, dt = resolve_policy(policy_key, goal_dist=goal_dist,
+                                         goal_y=goal_y, magnitude=magnitude,
+                                         step_duration=step_duration,
+                                         plan_dt=plan_dt, disturbed=disturbed,
+                                         seed=seed)
         sim = KinematicSim(world, sense_range=sense_range,
                            robot_radius=cfg.robot.robot_radius, seed=seed,
                            disturbance=(C.DisturbanceConfig() if disturbed else None))

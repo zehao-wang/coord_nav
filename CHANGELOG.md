@@ -3,6 +3,63 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.16 - 2026-08-04 - TestField: dynamic obstacles (pymunk) + occlusion, live-parity plug-in arena
+
+`mpc_baseline/testfield.py` + `scripts/run_field.py` + tests. The gap it closes:
+every prior number -- both suites, all 4 table rows -- was a STATIC world, and the
+sim was X-RAY (saw obstacles through obstacles). Any policy registered in the
+registry plugs into the field by key; its inputs match the live PolicyRunner
+(same Observation contract and ObstacleField code, 3 Hz tick, dispatch-next-tick
++ dead-time compensation, measured execution disturbance at the 1/3 s tick), plus
+occlusion: a circle whose centre ray is blocked by another obstacle is not
+sensed. Dynamic obstacles are pymunk rigid bodies (elastic, frictionless,
+zero-gravity; bounce off walls, statics and each other), so seeded random cases
+stay physically consistent; the car stays on the calibrated kinematics, and
+contact is scored with the same footprint ruler as the guard, SWEPT through 10
+sub-steps per tick so a crosser cannot pass through the footprint between ticks.
+Battery: 5 archetypes (crossers, oncoming, occluded-oncoming behind the box) +
+10 seeded random cases, 20 seeds each.
+
+Findings (300 episodes per policy per config):
+
+    default (live-faithful):  v2 0.757 / 0.243     v1 0.530 / 0.437
+    --mem 0 (no memory):      v2 0.837 / 0.163     v1 0.580 / 0.380
+    --perfect-exec:           v2 0.867 / 0.133     v1 0.557 / 0.443
+
+- **Neither baseline is robust to intercepting movers** (cross_slow: v2 0.85
+  collision, v1 1.00). The rollouts assume a frozen world; nothing estimates
+  obstacle velocity. This is the real capability gap the static suites hid --
+  a dynamic-capable policy must extrapolate motion (frames are there to diff).
+- **The 1.5 s obstacle memory is a LIABILITY in dynamic worlds**: --mem 0 is
+  safer for both variants -- a mover drags a trail of stale remembered circles
+  and the soft wall pins to where the obstacle no longer is. Quantified at
+  0.243->0.163 (v2) and 0.437->0.380 (v1) collision.
+- **v1's dynamic collisions are mostly NOT execution disturbance** (0.443 under
+  --perfect-exec): planning against a one-frame-old static world is the cause.
+
+Correctness fixes that fell out of the field's adversarial review (9 agents, 6
+confirmed, 0 refuted):
+
+- **A zero command now BRAKES in the disturbed sim** (sim.py). The yaw-lag state
+  used to take its additive noise on (0,0,0) commands too, so a stopped car
+  random-walked its heading ~60 deg/10 s -- the fit is from DRIVING ticks, and
+  the real runner's hold path clamps the wheels. Stop-and-wait policies were
+  being penalized for a phantom. Nudged the disturbed rows: tight v1
+  0.492/0.500 -> 0.475/0.517, realistic v1 0.950 -> 0.925 (README updated).
+- **Disturbed mode forces the live tick for EVERY policy** (eval.resolve_policy,
+  now the single construction path shared by run_variant/run_policy/TestField):
+  a third-party velocity cfg with mppi.dt != 1/3 used to run the "live-faithful"
+  mode at its own cadence; now mppi.dt/rollout_dt are overwritten to the tick,
+  exactly like runner.py does on the car.
+- occluded archetype redesigned (the original crosser left the shadow almost
+  immediately -- the case named for occlusion never exercised it; now an
+  oncoming mover hides dead behind the box for seconds), --mem now rides along
+  to --anim (the gifs used to depict a DIFFERENT episode than the table),
+  goal_dist < 2 m is rejected with a clear error (used to crash or silently
+  launch movers outside the arena), --policy de-duplicates, --anim degrades
+  gracefully without matplotlib, run_case built-in specs default to the live
+  profile. pymunk added to mpc dependencies; 15 tests total.
+
 ## 0.9.15 - 2026-08-04 - eval harness audit: honest collision metric, runnable protocol, guard defaults
 
 A 13-agent adversarial audit (4 review dimensions, every finding independently
