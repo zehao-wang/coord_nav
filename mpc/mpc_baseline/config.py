@@ -183,6 +183,35 @@ class Variant2Config:
     goal: GoalConfig = field(default_factory=GoalConfig)
 
 
+# --- execution disturbance (for the offline sim) --------------------------
+@dataclass
+class DisturbanceConfig:
+    """How the real car deviates from the commanded body velocity, FIT from 298
+    clean on-car ticks (six 2026-07-25 runs, wedge-contaminated segments removed;
+    see calibration/results/ and CHANGELOG 0.9.12).
+
+    Exists because the undisturbed sim mis-ranks controllers: w_cont=0.6 looked
+    FREE offline (1.000 success, less jitter) and went 0/2 on the car -- in a
+    perfect-execution world a sluggish controller never pays for being unable to
+    correct. Enable this to make offline smoothness/robustness tuning transfer.
+
+        v: multiplicative per-tick noise      v_exec = v_cmd * N(v_gain, v_std)
+        w: first-order lag + additive noise   w_exec' = a*w_exec + b*w_cmd + N(0,w_noise)
+           with a = exp(-dt / w_tau); b fixed by w_b at the fitted dt=1/3 s.
+
+    The w fit: a=0.498, b=0.390, residual 0.171 rad/s, R^2 0.885 (vs 0.700 for
+    zero-lag) -- a lag constant of 0.48 s, ~1.4 ticks, which is exactly why
+    commands that flip sign every tick deliver only ~0.6-0.7 of their yaw.
+    """
+    v_gain: float = 0.946             # mean of measured/commanded arc speed per tick
+    v_std: float = 0.268              # its std (includes odom sampling jitter, which
+                                      # the real loop also sees, so it belongs here)
+    w_tau: float = 0.48               # yaw lag time constant (s); a = exp(-dt/w_tau)
+    w_b: float = 0.390                # input gain at the FITTED dt (1/3 s); scaled
+                                      # with dt so steady-state gain stays put
+    w_noise: float = 0.171            # additive yaw-rate noise per tick (rad/s)
+
+
 # --- obstacle handling (base->odom, rolling memory) ----------------------
 @dataclass
 class ObstacleConfig:

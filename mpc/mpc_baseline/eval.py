@@ -53,13 +53,18 @@ def _default_plan_dt(cfg):
 
 
 def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
-                obs_cfg=None, seed=0, sense_range=3.0, plan_dt=None):
+                obs_cfg=None, seed=0, sense_range=3.0, plan_dt=None,
+                disturbed=False):
     """Run one variant over the scenarios (default suite). Fresh policy + sim per
     scenario. Returns a list of EpisodeResult.
 
     `variant` is 1 or 2. Any key in POLICY_REGISTRY (including your own model) is
     forwarded to run_policy(); anything else raises instead of silently running
-    variant 2. `plan_dt` overrides the control period -- VELOCITY policies only;
+    variant 2. `disturbed=True` is the LIVE-FAITHFUL evaluation: the measured
+    execution-disturbance model (DisturbanceConfig, fit from 298 on-car ticks)
+    plus the runner's buffered/compensated tick loop. Screen any smoothness or
+    robustness tuning against it -- the perfect-execution default mis-ranked
+    w_cont once already (looked free, went 0/2 on the car). `plan_dt` overrides the control period -- VELOCITY policies only;
     a discrete policy runs each action for its own duration (see run_episode), so
     plan_dt does nothing for it.
     """
@@ -73,7 +78,7 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
     if v_exact in POLICY_REGISTRY:
         return run_policy(v_exact, scenarios=scenarios, goal_dist=goal_dist,
                           obs_cfg=obs_cfg, seed=seed, sense_range=sense_range,
-                          plan_dt=plan_dt)
+                          plan_dt=plan_dt, disturbed=disturbed)
     v = v_exact.lower()
     if v not in _V1 and v not in _V2:
         _cfg_for(variant, live, goal_dist)        # raises with the full message
@@ -84,23 +89,26 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
     is_v1 = v in _V1
     dt = plan_dt if plan_dt is not None else (cfg.mppi.dt if is_v1 else cfg.step_duration)
 
+    dist = C.DisturbanceConfig() if disturbed else None
     results = []
     for world in scenarios:
         sim = KinematicSim(world, sense_range=sense_range,
-                           robot_radius=cfg.robot.robot_radius, seed=seed)
+                           robot_radius=cfg.robot.robot_radius, seed=seed,
+                           disturbance=dist)
         # seed BOTH variants: Variant1Policy was getting the default 0 every time, so
         # run_variant(seed=N) only varied the simulator and the documented multi-seed
         # protocol was a no-op through this API.
         policy = (Variant1Policy(cfg, seed=seed) if is_v1
                   else Variant2Policy(cfg, seed=seed))
         results.append(run_episode(sim, policy, variant, obs_cfg, cfg.goal,
-                                   plan_dt=dt, robot_cfg=cfg.robot))
+                                   plan_dt=dt, robot_cfg=cfg.robot,
+                                   buffered=disturbed))
     return results
 
 
 def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
                magnitude=40.0, obs_cfg=None, seed=0, sense_range=3.0,
-               plan_dt=None, step_duration=0.5):
+               plan_dt=None, step_duration=0.5, disturbed=False):
     """Run ANY registered policy -- including your own model -- over the scenarios.
 
     Fresh policy + sim per scenario, constructed through registry.build_policy so
@@ -126,9 +134,11 @@ def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
         cfg.goal.goal_y = goal_y
         dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
         sim = KinematicSim(world, sense_range=sense_range,
-                           robot_radius=cfg.robot.robot_radius, seed=seed)
+                           robot_radius=cfg.robot.robot_radius, seed=seed,
+                           disturbance=(C.DisturbanceConfig() if disturbed else None))
         results.append(run_episode(sim, policy, policy_key, obs_cfg, cfg.goal,
-                                   plan_dt=dt, robot_cfg=cfg.robot))
+                                   plan_dt=dt, robot_cfg=cfg.robot,
+                                   buffered=disturbed))
     return results
 
 

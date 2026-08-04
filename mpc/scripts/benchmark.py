@@ -10,11 +10,9 @@
 Variant 2 (discrete grid-hop) is the default baseline the car is tested with;
 variant 1 (continuous v,omega sampling MPC) is the continuous comparison. Any
 policy registered in mpc_baseline/registry.py can join the table via --policy
-(repeatable). NOTE the built-ins and --policy entries are NOT directly comparable:
---variant uses the sim profile, and even with --live-profile it takes magnitude from
-LiveConfig.magnitude (40 -> v_max 0.361) while --policy builds through the registry
-at --magnitude (default 40 -> v_max 0.361), a 1.63x speed difference. Match them
-with --live-profile --magnitude 30.
+(repeatable). Comparability: --variant defaults to the SIM profile (v_max 0.22)
+while --policy always builds the LIVE profile; with --live-profile both use
+LiveConfig.magnitude = 40 and the numbers are directly comparable.
 """
 
 import os
@@ -68,6 +66,11 @@ def main():
     ap.add_argument("--plan-dt", type=float, default=None,
                     help="override the control period, VELOCITY policies only (a discrete "
                          "policy runs each action for its own step_duration)")
+    ap.add_argument("--disturbed", action="store_true",
+                    help="LIVE-FAITHFUL evaluation: measured execution disturbance "
+                         "(yaw lag tau 0.48 s + speed noise, fit from 298 on-car "
+                         "ticks) plus the runner's buffered tick loop. Screen any "
+                         "smoothness/robustness tuning with this flag ON.")
     ap.add_argument("--json", default=None)
     ap.add_argument("--plots", default=None)
     args = ap.parse_args()
@@ -85,12 +88,15 @@ def main():
     by = {}
     if not args.no_builtins:
         by["v2-grid"] = E.run_variant(2, scenarios, live=args.live_profile,
-                                      goal_dist=args.goal_dist, plan_dt=args.plan_dt)
+                                      goal_dist=args.goal_dist, plan_dt=args.plan_dt,
+                                      disturbed=args.disturbed)
         by["v1-vw"] = E.run_variant(1, scenarios, live=args.live_profile,
-                                    goal_dist=args.goal_dist, plan_dt=args.plan_dt)
+                                    goal_dist=args.goal_dist, plan_dt=args.plan_dt,
+                                    disturbed=args.disturbed)
     for key in args.policy:
         by[key] = E.run_policy(key, scenarios, goal_dist=args.goal_dist,
-                               magnitude=args.magnitude, plan_dt=args.plan_dt)
+                               magnitude=args.magnitude, plan_dt=args.plan_dt,
+                               disturbed=args.disturbed)
     E.print_table(by)
     if args.json:
         E.to_json(by, args.json)

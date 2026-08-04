@@ -3,6 +3,61 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.13 - 2026-08-04 - execution-disturbance model: offline tuning can now be trusted
+
+The gap this closes: the undisturbed sim mis-ranks controllers. w_cont=0.6 looked
+FREE offline (1.000 success, less jitter) and went 0/2 on the car -- in a
+perfect-execution world, a controller that cannot correct never pays for it. Every
+smoothness/robustness tuning question was blocked on this.
+
+**Model, FIT from 298 clean on-car ticks** (six 2026-07-25 runs, wedge-contaminated
+segments excluded; command-vs-measured pairs from the tick logs):
+
+    v: multiplicative per-tick noise    N(0.946, 0.268)
+    w: first-order lag + noise          tau = 0.48 s (~1.4 ticks), R^2 0.885
+                                        (zero-lag model: 0.700), noise 0.171 rad/s
+
+The 0.48 s yaw lag IS the quantified "command flips sign every 1-2 ticks and the
+chassis cannot follow" -- the mechanism behind yaw fidelity 0.6.
+
+**Implementation:** `DisturbanceConfig` (config.py) + execution filtering in
+`KinematicSim.step`; `run_episode(buffered=True)` reproduces the live runner's loop
+shape (one-tick dispatch buffer + dead-time compensation); `eval.run_variant/
+run_policy(disturbed=True)` and `benchmark.py --disturbed` switch the whole stack to
+the live-faithful evaluation.
+
+**Acceptance (reproduce the w_cont incident):** in the era-faithful open-corridor
+setup, w_cont=0.6 costs 15 % timeouts even UNDISTURBED once the loop is buffered
+(1.000 -> 0.850) and stays degraded disturbed -- the original "looked free" verdict
+was HALF the missing buffer, half the missing disturbance. The car's exact 0/2 is
+n=2 and was not chased (10-15 %% simulated timeout rates make 2-for-2 plausible;
+over-fitting a two-sample target would be worse than honest under-shoot).
+
+**New 20-seed baseline, tight suite:**
+
+                       v1              v2
+    undisturbed    0.992 / 0.008   0.833 / 0.000
+    DISTURBED      0.767 / 0.167   1.000 / 0.000
+
+Two findings with face validity: variant 1 pays 0.167 collisions for the yaw lag in
+tight scenarios -- the measurable target for the yaw-tracking work -- and variant 2,
+which steers by holonomic translation and never needs the lagged axis, is the more
+robust baseline under realistic execution, matching on-car intuition.
+
+## 0.9.12 - 2026-08-04 - third calibration point; ch341 root cause; car_base respawn
+
+(Entry written after the fact -- the work landed in 8db0e63/49d665c with full commit
+messages but no changelog section.) 11.1 V calibration validated the voltage model:
+arm 0.194/0.198/0.194 across three voltages, speed extrapolation within 2.5 %% at
+magnitude 40; shipped constants unchanged. Root cause of the MCU wedges found in
+dmesg: the ch341 USB-serial adapter spontaneously drops off the bus (marginal
+contact, vibration-correlated); car_base now has respawn="true" (deployed), the
+per-tick imu_frozen() monitor covers the freeze-without-death case, and
+calib_model discards samples contaminated mid-measurement. The user reseating the
+cable stabilised the link (6+ min without a drop, previously minutes apart);
+lesson recorded: after a drop while IDLE, car_base holds a stale fd without dying
+-- restart car-ros; respawn only fires on the write-error death path.
+
 ## 0.9.11 - 2026-08-04 - per-tick MCU wedge detection
 
 Closes the top item left open on 2026-07-25: both MCU wedges struck MID-RUN, after

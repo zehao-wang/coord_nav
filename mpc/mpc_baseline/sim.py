@@ -29,8 +29,16 @@ EpisodeResult = namedtuple("EpisodeResult", [
 
 class KinematicSim(object):
     def __init__(self, world, sense_range=3.0, robot_radius=0.13,
-                 noise_xy=0.0, dropout=0.0, seed=0):
+                 noise_xy=0.0, dropout=0.0, seed=0, disturbance=None):
         self.world = world
+        # DisturbanceConfig or None. With it, step() executes commands the way the
+        # REAL car does (fit from 298 on-car ticks): multiplicative speed noise and
+        # a first-order yaw lag (tau 0.48 s ~= 1.4 ticks). Without it the sim is a
+        # perfect-execution world, which mis-ranks controllers -- w_cont=0.6 looked
+        # free undisturbed and went 0/2 on the car, because sluggishness only costs
+        # when there is something to correct.
+        self.dist = disturbance
+        self._w_exec = 0.0                  # yaw-lag filter state
         self.circles = np.asarray(world.circles, dtype=float).reshape(-1, 3) \
             if len(world.circles) else np.zeros((0, 3))
         self.sense_range = sense_range
@@ -45,9 +53,23 @@ class KinematicSim(object):
         return self.t
 
     def step(self, body_vel, dt):
-        """Advance the true pose by one body-velocity command held for dt."""
-        vb = np.asarray(body_vel, dtype=float).reshape(1, 1, 3)
-        self.pose = rollout_body(self.pose, vb, dt)[0, 0]
+        """Advance the true pose by one body-velocity command held for dt,
+        through the execution-disturbance model if one is configured."""
+        vb = np.asarray(body_vel, dtype=float).copy()
+        if self.dist is not None:
+            d = self.dist
+            # multiplicative speed noise (translation axes together: the fit is on
+            # the arc speed, and vx/vy come from the same four wheels)
+            vb[:2] *= self.rng.normal(d.v_gain, d.v_std)
+            # first-order yaw lag: a from the time constant, b scaled to keep the
+            # fitted steady-state gain b0/(1-a0) at any dt
+            a0 = float(np.exp(-(1.0 / 3.0) / d.w_tau))
+            ss = d.w_b / (1.0 - a0)
+            a = float(np.exp(-dt / d.w_tau))
+            b = ss * (1.0 - a)
+            self._w_exec = a * self._w_exec + b * vb[2] + self.rng.normal(0.0, d.w_noise)
+            vb[2] = self._w_exec
+        self.pose = rollout_body(self.pose, vb.reshape(1, 1, 3), dt)[0, 0]
         self.t += dt
         return self.pose
 
@@ -89,7 +111,7 @@ def goal_from_start(start, goal_dist, goal_y=0.0):
 
 
 def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
-                max_steps=400, robot_cfg=None):
+                max_steps=400, robot_cfg=None, buffered=False):
     """Drive any Policy closed-loop in `sim` toward goal B.
 
     velocity policies: apply (v, w) as a body velocity held for plan_dt each cycle.
@@ -98,6 +120,15 @@ def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
       velocity. Pass it as `robot_cfg`; it falls back to `policy.cfg.robot` for the
       built-in variants. The Policy interface does NOT require a `.cfg`, so a
       custom discrete policy should be given `robot_cfg` explicitly.
+
+    buffered=True reproduces the LIVE runner's loop shape: the action planned at
+    tick N executes at tick N+1 (superseding), and the policy plans from the pose
+    advanced by the command in flight (the runner's dead-time compensation). The
+    default unbuffered loop mattered once already: w_cont=0.6 looked FREE through
+    it while the buffered loop shows a 15 % timeout cost even UNDISTURBED --
+    combine with KinematicSim(disturbance=...) for the live-faithful evaluation
+    that smoothness/robustness tuning must be screened against.
+
     Returns an EpisodeResult with trajectory and metrics.
     """
     field = ObstacleField(obs_cfg, sim.clock)
@@ -110,30 +141,44 @@ def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
     collided = False
     reached = False
 
+    def _body_of(act):
+        """One planned Action -> (body velocity, step time)."""
+        if act.space == "velocity":
+            return np.array([act.v, 0.0, act.w]), plan_dt
+        rc = robot_cfg
+        if rc is None:
+            rc = getattr(getattr(policy, "cfg", None), "robot", None)
+        if rc is None:
+            raise TypeError(
+                "discrete policy %s needs a RobotConfig to convert (action, "
+                "magnitude) into a body velocity. Pass run_episode(..., "
+                "robot_cfg=cfg.robot) -- the Policy interface does not require a "
+                "`.cfg` attribute, only this offline sim path needs the chassis "
+                "model." % type(policy).__name__)
+        body = np.asarray(action_body_velocity(act.action_id, act.magnitude, rc))
+        # buffered = the tick model: one tick of the hop executes, then the next
+        # tick's hop supersedes it (runner rollout_dt semantics)
+        return body, (plan_dt if buffered else act.duration)
+
+    pending = None                       # buffered: body decided last tick
     for _ in range(max_steps):
         circles = sim.sense()
         field.update(circles, sim.pose)
-        act = policy.plan(Observation(sim.pose.copy(), goal, circles, field))
 
-        if act.space == "velocity":
-            body = np.array([act.v, 0.0, act.w])
-            dt = plan_dt
-            effort += (abs(act.v) + abs(act.w)) * dt
+        plan_pose = sim.pose.copy()
+        if buffered and pending is not None:
+            # dead-time compensation, as the live runner does: plan from where the
+            # car will be once the in-flight command has run its tick
+            plan_pose = rollout_body(plan_pose, pending[0].reshape(1, 1, 3),
+                                     pending[1])[0, 0]
+        act = policy.plan(Observation(plan_pose, goal, circles, field))
+
+        if buffered:
+            body, dt = pending if pending is not None else (np.zeros(3), plan_dt)
+            pending = _body_of(act)
         else:
-            rc = robot_cfg
-            if rc is None:
-                rc = getattr(getattr(policy, "cfg", None), "robot", None)
-            if rc is None:
-                raise TypeError(
-                    "discrete policy %s needs a RobotConfig to convert (action, "
-                    "magnitude) into a body velocity. Pass run_episode(..., "
-                    "robot_cfg=cfg.robot) -- the Policy interface does not require a "
-                    "`.cfg` attribute, only this offline sim path needs the chassis "
-                    "model." % type(policy).__name__)
-            body = np.asarray(action_body_velocity(
-                act.action_id, act.magnitude, rc))
-            dt = act.duration
-            effort += float(np.hypot(body[0], body[1]) + abs(body[2])) * dt
+            body, dt = _body_of(act)
+        effort += float(np.hypot(body[0], body[1]) + abs(body[2])) * dt
 
         prev = sim.pose.copy()
         sim.step(body, dt)
