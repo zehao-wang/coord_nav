@@ -150,6 +150,14 @@ class Variant2Policy(Policy):
         self.n = len(self.ids)
         self.rng = np.random.default_rng(seed)
         self._nominal = None                              # warm-start seq (indices)
+        # unit translation direction per action (zero rows for rotate/stop):
+        # feeds the direction-smoothness cost
+        norms = np.hypot(self.table[:, 0], self.table[:, 1])
+        self._dirs = np.zeros((self.n, 2))
+        nz = norms > 1e-9
+        self._dirs[nz, 0] = self.table[nz, 0] / norms[nz]
+        self._dirs[nz, 1] = self.table[nz, 1] / norms[nz]
+        self._prev_dir = None                             # direction the car is executing
 
     def _candidates(self):
         H = self.cfg.horizon
@@ -173,10 +181,12 @@ class Variant2Policy(Policy):
         cost, _collided = total_cost_discrete(
             states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt,
             predict=getattr(self.cfg, "predict_obstacles", False),
-            pred_delay=getattr(self.cfg, "pred_extra_delay_s", 0.0))
+            pred_delay=getattr(self.cfg, "pred_extra_delay_s", 0.0),
+            dirs=self._dirs[seqs], prev_dir=self._prev_dir)
 
         best = int(np.argmin(cost))
         best_seq = seqs[best]
+        self._prev_dir = self._dirs[best_seq[0]].copy()   # what the car runs next tick
         # warm start next cycle: time-shift, repeat the last action
         self._nominal = np.concatenate([best_seq[1:], best_seq[-1:]])
         mag, dur = self.cfg.step_magnitude, self.cfg.step_duration
@@ -186,6 +196,7 @@ class Variant2Policy(Policy):
 
     def reset(self):
         self._nominal = None
+        self._prev_dir = None
 
 
 def make_policy(variant, cfg, **kw):

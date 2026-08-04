@@ -80,6 +80,39 @@ def test_disturbed_discrete_policy_rolls_out_at_the_executed_tick():
     assert captured["cfg"].rollout_dt == pytest.approx(C.TickConfig().period)
 
 
+def test_crosstrack_l1_pulls_near_the_line():
+    # the quadratic's gradient vanishes near the line; the L1 term must not
+    from mpc_baseline.cost import crosstrack_cost
+    cc = C.CostConfig()
+    line = (0.0, 1.0, 0.0)                    # the x-axis; cross-track = y
+    near = np.zeros((1, 4, 3)); near[:, :, 1] = 0.05
+    nearer = np.zeros((1, 4, 3)); nearer[:, :, 1] = 0.04
+    dt = 1.0 / 3.0
+    gap = crosstrack_cost(near, line, cc, dt)[0] - crosstrack_cost(nearer, line, cc, dt)[0]
+    cc0 = C.CostConfig(); cc0.w_track_l1 = 0.0
+    gap0 = crosstrack_cost(near, line, cc0, dt)[0] - crosstrack_cost(nearer, line, cc0, dt)[0]
+    assert gap > 3.0 * gap0                   # L1 dominates the near-line gradient
+
+
+def test_direction_cost_penalizes_double_back_most():
+    from mpc_baseline.cost import direction_cost
+    cc = C.CostConfig()
+    cc.w_dir_seq, cc.w_dir_hist = 1.0, 1.0
+    fwd = np.array([1.0, 0.0])
+    seqs = np.array([
+        [fwd, fwd, fwd],                      # straight
+        [fwd, [0.0, 1.0], fwd],              # 90-deg jog
+        [fwd, -fwd, fwd],                     # double-back
+    ])
+    c = direction_cost(seqs, cc, 1.0 / 3.0, prev_dir=fwd)
+    assert c[0] < c[1] < c[2]
+    # (1-cos): a reversal transition costs 2x a 90-deg one
+    assert (c[2] - c[0]) == pytest.approx(2.0 * (c[1] - c[0]), rel=1e-6)
+    # rotation actions (zero direction) are exempt, not billed a phantom turn
+    rot = np.array([[fwd, [0.0, 0.0], fwd]])
+    assert direction_cost(rot, cc, 1.0 / 3.0)[0] == pytest.approx(0.0)
+
+
 def test_disturbed_forces_live_tick_for_velocity_policies_too():
     # runner parity: disturbed mode must plan AND execute at the tick even for a
     # cfg whose mppi.dt is something else (a third-party policy's config)

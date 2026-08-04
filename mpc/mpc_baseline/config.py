@@ -102,6 +102,31 @@ class CostConfig:
     w_track: float = 4.1667           # cross-track: pull back onto the straight A->B line after
                                       # a detour (variant 1). Higher = tighter, but too high
                                       # fights the wide detour needed around a wall on the line
+    w_track_l1: float = 1.0           # LINEAR cross-track: constant pull, so the LAST few cm
+                                      # back to the line close quickly (the quadratic's gradient
+                                      # vanishes there -- the car meandered beside the line after
+                                      # a mover receded). Grows slower than quadratic far out, so
+                                      # it does not re-create the w_track>4.17 detour fight.
+                                      # Screened (20 seeds each, CHANGELOG 0.9.18): field tail
+                                      # wander -15/-20%, field success/collision neutral-to-
+                                      # better, realistic 1.000 unchanged; costs ~1pp on the
+                                      # beyond-physical-limits tight stress suite. Applied to
+                                      # BOTH vw variants, so the _t ablation stays clean.
+    w_dir_seq: float = 0.0            # discrete variants: (1-cos) turn between consecutive hop
+                                      # directions (integral x dt). SCREENED AND REJECTED at any
+                                      # weight (0.1 cost 7pp field success): it taxes the planned
+                                      # go-around itself. Mechanism kept for experiments.
+    w_dir_hist: float = 0.0           # discrete variants: (1-cos) turn of the FIRST hop away
+                                      # from the direction the car is already executing (single
+                                      # term). Targets tick-to-tick double-backs on near-ties.
+                                      # DEFAULT 0 to keep the *_t-vs-plain ablation single-
+                                      # variable. Validated OPTION for mpc_grid_t deployments:
+                                      # 0.1 -> mean turn 22.9->16.0 deg at 0.980/0.020 field,
+                                      # tight-disturbed 1.000/0.000 intact. Do NOT enable for
+                                      # frozen-world mpc_grid: its double-backs are emergency
+                                      # corrections to a wrong world model, and taxing them costs
+                                      # 0.740->0.663 field success -- the fix for grid's
+                                      # unsmoothness is mpc_grid_t, not a smoothness penalty.
     w_obs: float = 100.0              # soft barrier weight inside the buffer
     obs_buffer: float = 0.15          # start pushing away this far outside inflation (m)
     extra_margin: float = 0.10        # added to (circle.r + robot_radius) inflation (clearance)

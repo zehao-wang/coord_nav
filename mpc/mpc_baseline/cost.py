@@ -84,27 +84,78 @@ def obstacle_cost(states, field, robot_cfg, cost_cfg, dt, predict=False,
 
 
 def total_cost_discrete(states, goal, field, robot_cfg, cost_cfg, dt,
-                        predict=False, pred_delay=0.0):
+                        predict=False, pred_delay=0.0, dirs=None, prev_dir=None):
     """Full cost for the discrete variant. Returns (cost (K,), collided (K,)).
 
     No standing-still penalty: STOP keeps goal cost high far from B (never the
     argmin) and ~zero at B (correctly chosen), so a penalty would only fight settling.
+    dirs/prev_dir feed the direction-smoothness term (see direction_cost): the
+    discrete argmin used to flap between near-tied go-around sides, hopping
+    backward then forward tick to tick.
     """
     g = goal_cost(states, goal, cost_cfg, dt)
     o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt,
                                 predict=predict, pred_delay=pred_delay)
-    return g + o, collided
+    return g + o + direction_cost(dirs, cost_cfg, dt, prev_dir), collided
 
 
 def crosstrack_cost(states, line, cost_cfg, dt):
-    """Squared perpendicular deviation from the straight A->B line, summed over the
+    """Perpendicular deviation from the straight A->B line, summed over the
     horizon: pulls the car back onto the direct path after a detour (a tight
-    go-around). line = (nx, ny, c); cross-track = nx*x + ny*y - c. 0 if no line."""
-    if line is None or cost_cfg.w_track <= 0.0:
+    go-around). line = (nx, ny, c); cross-track = nx*x + ny*y - c. 0 if no line.
+
+    Two terms with complementary shapes: the QUADRATIC (w_track) dominates far
+    from the line but its gradient vanishes near it -- alone, the car finishes a
+    go-around and then meanders beside the line, because a few cm of deviation
+    costs almost nothing. The LINEAR term (w_track_l1) has CONSTANT pull, so it
+    closes that last gap quickly -- while growing slower than the quadratic far
+    out, so it does not re-create the fight-the-wide-detour failure that capped
+    w_track at 4.17 in the first place."""
+    if line is None or (cost_cfg.w_track <= 0.0 and
+                        getattr(cost_cfg, "w_track_l1", 0.0) <= 0.0):
         return 0.0
     nx, ny, c = line
     ct = nx * states[:, :, 0] + ny * states[:, :, 1] - c     # (K, H)
-    return cost_cfg.w_track * (ct * ct).sum(axis=1) * dt      # integral, see goal_cost
+    cost = cost_cfg.w_track * (ct * ct).sum(axis=1) * dt      # integral, see goal_cost
+    l1 = getattr(cost_cfg, "w_track_l1", 0.0)
+    if l1 > 0.0:
+        cost = cost + l1 * np.abs(ct).sum(axis=1) * dt
+    return cost
+
+
+def direction_cost(dirs, cost_cfg, dt, prev_dir=None):
+    """Discrete-action smoothness: (1 - cos) of the turn between consecutive hop
+    DIRECTIONS, plus the first hop's turn away from the action the car is
+    ALREADY executing. dirs = (K, H, 2) unit translation directions (zero rows
+    for rotation/stop actions -- those transitions are exempted via the norm
+    mask, not billed a phantom turn).
+
+    Why (1-cos) instead of the raw angle: small corrections are nearly free
+    ((1-cos45) = 0.29 vs 1.0 for 90 deg -- quadratic near zero), a double-back
+    costs 2x a 90 deg turn, and it is a plain dot product, smooth for the
+    argmin. The sequence term is an integral
+    (x dt, one transition per hop); the history term is a single transition like
+    w_cont. Keep the weights TIE-BREAKER sized: a legitimate escape reversal
+    (obstacle suddenly ahead) must stay affordable against the collision and
+    goal terms."""
+    if dirs is None:
+        return 0.0
+    w_seq = getattr(cost_cfg, "w_dir_seq", 0.0)
+    w_hist = getattr(cost_cfg, "w_dir_hist", 0.0)
+    if w_seq <= 0.0 and w_hist <= 0.0:
+        return 0.0
+    n = np.linalg.norm(dirs, axis=2)                          # (K, H) 0 or 1
+    cost = 0.0
+    if w_seq > 0.0 and dirs.shape[1] > 1:
+        dots = (dirs[:, :-1] * dirs[:, 1:]).sum(axis=2)       # (K, H-1)
+        mask = n[:, :-1] * n[:, 1:]
+        cost = w_seq * (mask - dots).sum(axis=1) * dt
+    if w_hist > 0.0 and prev_dir is not None:
+        pd = np.asarray(prev_dir, dtype=float)
+        if np.hypot(pd[0], pd[1]) > 1e-9:
+            d0 = dirs[:, 0, 0] * pd[0] + dirs[:, 0, 1] * pd[1]
+            cost = cost + w_hist * (n[:, 0] - d0)
+    return cost
 
 
 def control_cost(controls, cost_cfg, dt, u_prev=None):

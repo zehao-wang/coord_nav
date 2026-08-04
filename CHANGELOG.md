@@ -3,6 +3,47 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.18 - 2026-08-04 - smoothness screening: L1 cross-track shipped, direction penalty rejected-with-data
+
+Two behaviour reports from watching the field animations: vw meanders beside
+the A->B line after a mover recedes (slow return to path), and grid sometimes
+double-backs a hop before continuing. Both got a mechanism and a 20-seed
+screening sweep (README rule: smoothness tuning is screened against the
+disturbed/live-faithful loops -- the sweeps that killed w_cont in 0.9.3 now run
+in minutes instead of on the car).
+
+**Shipped: `CostConfig.w_track_l1 = 1.0`** (linear cross-track, vw variants).
+Diagnosis: the quadratic w_track's gradient vanishes near the line, so the
+last few cm of return cost almost nothing -- hence the meander. The L1 term
+has CONSTANT pull near the line while growing slower than the quadratic far
+out, so it does not re-create the fight-the-wide-detour failure that capped
+w_track at 4.17. Sweep (w_l1 = 0 / 0.5 / 1.0 / 2.0): field tail-wander
+0.192->0.159 (vw) and 0.133->0.106 (vw_t) monotonically; field
+success/collision neutral-to-better; realistic 1.000 unchanged; tight stress
+suite pays ~1pp. Applied to BOTH vw variants so the _t ablation stays
+single-variable. Republished numbers: tight v1 0.717/0.283 default,
+0.442/0.533 disturbed; realistic disturbed 0.938/0.037; field vw 0.553/0.410,
+vw_t 0.873/0.110 (grid rows untouched).
+
+**Rejected with data: hop-direction smoothness for the FROZEN grid.** The
+mechanism (cost.direction_cost, (1-cos) of the turn between hops and vs the
+executing action -- small corrections nearly free, a double-back 2x a 90-deg
+turn) is in the tree, but every sequence-term weight failed screening
+(w=0.1: field success 0.740->0.667 at 21.8->15.5 deg mean turn), and the
+history-only term still costs plain grid 6pp at w=0.05. The finding worth
+recording: **frozen-world grid's double-backs are not noise -- they are
+emergency corrections to a world model that jumps every frame**, and taxing
+them taxes error recovery. The time-aware grid_t has no such excuse and gets
+a genuine free lunch: `w_dir_hist = 0.1` -> mean turn 22.9->16.0 deg at
+0.980/0.020 (better than its 0.977/0.023 baseline), tight-disturbed
+1.000/0.000 intact. DEFAULTS stay 0 to keep the *_t-vs-plain ablation clean
+and the static byte-equivalence tests meaningful; 0.1 is the documented
+deployment option for mpc_grid_t (config.py/README). The real fix for grid's
+unsmoothness is mpc_grid_t itself: reversal rate is 0.8% of transitions
+either way, and the visible flapping largely disappears once the planner's
+world stops jumping. 25 tests (direction-cost math incl. rotation exemption,
+L1 near-line gradient).
+
 ## 0.9.17 - 2026-08-04 - time-aware baselines (mpc_grid_t / mpc_vw_t): constant-velocity obstacle prediction
 
 The user asked for baselines that DO and DON'T consider obstacle motion over
