@@ -3,6 +3,26 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.14 - 2026-08-04 - live A/B go-around: both variants clean; regime claims hold
+
+Operator-run A/B with a real obstacle (~1 m ahead, B = 3 m, magnitude 40, guard on),
+variant 1 then -- after turning the car around, so the REVERSE course -- variant 2.
+`output/2026-08-04_17-43-38-523` (v1) and `_17-44-09-371` (v2).
+
+    v1: reached 9.56 s, min clearance 0.322 m, fidelity xy 1.015 / yaw 0.686
+    v2: reached 9.58 s, min clearance 0.168 m, fidelity xy 0.844
+    both: 0 skipped frames, 0 guard trips, dt ~0.330
+
+- **The disturbance model's realistic-regime claim is confirmed on the car**: both
+  variants go around cleanly at realistic spacing, as the disturbed sim predicts.
+- **xy fidelity 1.015 at 10.8 V** -- the battery sat almost exactly at the 10.5 V
+  calibration point and the plant model tracked to 1.5 %. Yaw 0.686 is the best
+  recorded (the reseated ch341 cable may be helping the whole serial path).
+- The tight-regime prediction (v1 collides 0.167 under yaw lag) remains UNTESTED --
+  this course was not tight. The v1-vs-v2 clearance difference (0.322 vs 0.168,
+  opposite of the sim's ordering) is CONFOUNDED: v2 ran the reverse course after a
+  manual turn-around, n=1 each. No conclusion drawn.
+
 ## 0.9.13 - 2026-08-04 - execution-disturbance model: offline tuning can now be trusted
 
 The gap this closes: the undisturbed sim mis-ranks controllers. w_cont=0.6 looked
