@@ -3,7 +3,7 @@
 Everything the planner, simulator and live runner need is here so a run is fully
 described by one config object. Per-variant factory helpers give sensible
 starting points: `sim_config_v1/_v2()` (nominal speeds, for offline development)
-and `live_config_v1/_v2()` (conservative, magnitude 30, for the real car).
+and `live_config_v1/_v2()` (the validated magnitude-40 profile for the real car).
 
 Frames & units throughout the package:
   * Planning happens in the ODOM frame: state = [x, y, theta], metres/radians,
@@ -23,14 +23,15 @@ from typing import Tuple
 class RobotConfig:
     """Chassis geometry and the PWM<->velocity mapping.
 
-    MEASURED on the car with calibration/calib_model.py (2026-07-25), not guessed. The
+    MEASURED on the car with calibration/calib_model.py (2026-07-25 and 2026-08-04),
+    not guessed. The
     plant is AFFINE, not proportional -- the motors do not turn until PWM clears a
     friction threshold:
 
         wheel m/s = (PWM - pwm_offset) / pwm_per_mps
 
-    Measured twice, at two battery voltages, PWM 30/40/60 per axis (fit residuals
-    +-0.003 m/s):
+    Measured at three battery voltages, PWM 30/40/60 per axis (fit residuals
+    +-0.003 m/s each):
 
         9.8 V : pwm_per_mps 73.4, pwm_offset 17.0, arm 0.194
         10.5 V: pwm_per_mps 72.1, pwm_offset 14.0, arm 0.198   <- shipped k/offset
@@ -43,7 +44,7 @@ class RobotConfig:
     (2 %), and larger for the friction threshold (17 -> 14 PWM: more torque is
     available, so a lower PWM breaks stiction). The arm is a geometry ratio, so
     measuring both axes at the SAME voltage cancels the voltage out -- that is the
-    number to trust, and it is why the two runs agree on it.
+    number to trust, and it is why all three sessions agree on it.
 
     Once the offset is accounted for the arm nearly stops drifting with PWM
     (0.216/0.196/0.184 at PWM 30/40/60, -15 % end to end, mean 0.198); under the
