@@ -310,7 +310,7 @@ def default_cases(goal_dist=3.0, n_random=10, random_seed=1000):
 def run_case(spec, case, live=True, goal_dist=3.0, goal_y=0.0, magnitude=40.0,
              step_duration=0.5, plan_dt=None, disturbed=True, seed=0,
              perception=None, obs_cfg=None, keep_history=False, max_steps=400,
-             substeps=10):
+             substeps=10, tweak=None):
     """One policy (registry key or built-in 1/2), one case. LIVE-FAITHFUL BY
     DEFAULT: disturbed=True is the field's normal mode -- pass disturbed=False
     only to inspect the idealized perfect-execution world -- and built-in 1/2
@@ -322,6 +322,10 @@ def run_case(spec, case, live=True, goal_dist=3.0, goal_y=0.0, magnitude=40.0,
                                      goal_y=goal_y, magnitude=magnitude,
                                      step_duration=step_duration, plan_dt=plan_dt,
                                      disturbed=disturbed, seed=seed)
+    if tweak is not None:
+        # experiment hook: mutate the freshly built cfg (e.g. cost weights)
+        # before the policy plans with it -- what the screening sweeps needed
+        tweak(cfg)
     sim = DynamicSim(case, sense_range=p.sense_range,
                      robot_radius=cfg.robot.robot_radius,
                      noise_xy=p.noise_xy, dropout=p.dropout, seed=seed,
