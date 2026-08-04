@@ -117,7 +117,13 @@ class Variant1Policy(Policy):
             states = rollout_unicycle(pose, seqs, m.dt)                # (K, H, 3)
             cost, _ = total_cost_velocity(states, seqs, goal, line, obs.field,
                                           self.cfg.robot, self.cfg.cost, m.dt,
-                                          self._u_prev)
+                                          self._u_prev,
+                                          predict=getattr(self.cfg,
+                                                          "predict_obstacles",
+                                                          False),
+                                          pred_delay=getattr(self.cfg,
+                                                             "pred_extra_delay_s",
+                                                             0.0))
             b = int(np.argmin(cost))
             best_seq, best_states, nom = seqs[b], states[b], seqs[b]
         self._nominal = np.vstack([best_seq[1:], best_seq[-1:]])       # time-shift warm start
@@ -165,7 +171,9 @@ class Variant2Policy(Policy):
         states = rollout_body(pose, body, dt)
 
         cost, _collided = total_cost_discrete(
-            states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt)
+            states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt,
+            predict=getattr(self.cfg, "predict_obstacles", False),
+            pred_delay=getattr(self.cfg, "pred_extra_delay_s", 0.0))
 
         best = int(np.argmin(cost))
         best_seq = seqs[best]

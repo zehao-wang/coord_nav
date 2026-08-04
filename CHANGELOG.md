@@ -3,6 +3,63 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.17 - 2026-08-04 - time-aware baselines (mpc_grid_t / mpc_vw_t): constant-velocity obstacle prediction
+
+The user asked for baselines that DO and DON'T consider obstacle motion over
+time. There is no drop-in mature library for this stack (the mature
+dynamic-obstacle planners -- teb_local_planner, Nav2's MPPI controller -- are
+whole ROS navigation stacks in C++); the mature METHOD, and the standard
+baseline in the dynamic-obstacle MPC literature, is constant-velocity
+tracking + prediction. That is what shipped:
+
+- **Tracker in the shared ObstacleField** (obstacles.py), so the live runner
+  and every sim run identical code: memory rows carry [EMA pos, r, t, v, n,
+  raw obs pos]; velocity = EMA of RAW-observation differences (differencing
+  the EMA position overestimates a steady mover by exactly 2x), capped at
+  vel_cap=1.0 m/s; association matches fresh circles against RAW-obs
+  positions coasted by the UNGATED velocity (fixes the measured 0.30 m/s
+  acquisition cliff -- the 0.40 m/s cross_fast archetype used to fragment
+  into 1-sighting tracks and was silently untrackable). Planning only sees a
+  velocity once a track clears vel_min_sightings=3 AND vel_deadband=0.04 m/s,
+  which is what makes a STATIC world byte-identical between *_t and plain
+  (regression-tested, including under 1 cm obs jitter): the *_t-vs-plain
+  comparison isolates "considers motion" as the single variable.
+- **Time-indexed obstacle cost** (cost.py): rollout step h scores against
+  predict(t + (h+1)*dt + pred_extra_delay_s), capped at pred_cap_s=2.5 s of
+  total extrapolation (beyond that a CV guess is fiction). pred_extra_delay_s
+  is the loop's dispatch buffering: the live runner and the buffered
+  (disturbed) sim start executing a plan ONE TICK after the frame it was
+  planned from -- the adversarial review measured the uncorrected timeline at
+  2 ticks (~0.15-0.23 m) of error in the CUT-IN-FRONT direction (one tick
+  dispatch + one tick EMA-position lag; predictions now extrapolate from the
+  raw observation, and runner.py/resolve_policy set the delay). These two
+  timeline fixes took the field's archetype collisions from 3/18 to 0/18 in
+  the review's A/B and are most of the final margin below.
+- Registry keys `mpc_grid_t` / `mpc_vw_t` (GUI dropdown picks them up);
+  `smoke/policy_run.py --variant` now accepts any registry key (1/2 map to
+  mpc_vw/mpc_grid), so the *_t variants are drivable on the car.
+
+TestField battery, 15 cases x 20 seeds, live-faithful (success / collision):
+
+    mpc_grid   0.740 / 0.260        mpc_grid_t  0.977 / 0.023
+    mpc_vw     0.537 / 0.440        mpc_vw_t    0.867 / 0.100
+
+Per-case: grid_t has ZERO collisions on 13/15 cases (cross_slow 0.85 -> 0.00,
+diagonal 0.65 -> 0.00, occluded_oncoming 0.20 -> 0.00 -- the coasted
+prediction tracks a mover THROUGH occlusion); the residue (rand03 0.20,
+rand07 0.15) is movers that bounce off a wall mid-approach, where constant
+velocity is the wrong model -- the honest boundary of a CV baseline. With
+tracking, obstacle memory flips back from liability to asset: *_t with
+--mem 0 degenerates to plain (no cross-frame association -> no velocities;
+grid_t collision 0.023 with memory vs 0.163 without). Known effects on the
+PLAIN variants: coasted association slightly changes their dynamic-world
+memory (the old stale-trail "phantom wall" made them accidentally
+conservative near occluders -- plain numbers re-measured in the same battery;
+static suites are unchanged, verified 120/120 episode pairs byte-identical).
+Review: 11 agents; the timeline and acquisition-cliff findings confirmed by
+instrumented reproduction, both fixed; 23 tests total pin the tracker math,
+the gates, the delay threading and the static-equivalence guarantee.
+
 ## 0.9.16 - 2026-08-04 - TestField: dynamic obstacles (pymunk) + occlusion, live-parity plug-in arena
 
 `mpc_baseline/testfield.py` + `scripts/run_field.py` + tests. The gap it closes:

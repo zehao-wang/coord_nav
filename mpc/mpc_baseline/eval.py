@@ -105,6 +105,11 @@ def resolve_policy(spec, live=False, goal_dist=1.0, goal_y=0.0, magnitude=40.0,
                 cfg.rollout_dt = dt
             if getattr(cfg, "mppi", None) is not None:
                 cfg.mppi.dt = dt
+            if hasattr(cfg, "pred_extra_delay_s"):
+                # buffered loop: the plan starts executing one tick after the
+                # frame it was planned from -- predictions must look that much
+                # further ahead (runner.py sets the same thing live)
+                cfg.pred_extra_delay_s = dt
         else:
             dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
         return policy, cfg, dt
@@ -120,6 +125,7 @@ def resolve_policy(spec, live=False, goal_dist=1.0, goal_y=0.0, magnitude=40.0,
             cfg.mppi.dt = dt              # runner parity (a no-op at the shipped 1/3)
         else:
             cfg.rollout_dt = dt
+        cfg.pred_extra_delay_s = dt       # buffered loop's one-tick dispatch delay
     else:
         dt = plan_dt if plan_dt is not None else (
             cfg.mppi.dt if is_v1 else cfg.step_duration)

@@ -28,7 +28,12 @@ import rospy
 from sensor_msgs.msg import Imu
 from carclient import CarClient
 from mpc_baseline import config as C
+from mpc_baseline.registry import POLICY_REGISTRY, build_policy
 from mpc_baseline.runner import PolicyRunner
+
+# legacy numeric variants map onto their registry entries; any other registry
+# key (mpc_vw_t, mpc_grid_t, your own model) is usable directly via --variant
+_VARIANT_KEYS = {"1": "mpc_vw", "2": "mpc_grid"}
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
@@ -75,7 +80,12 @@ def run(args):
         print("no /odom or /obstacles -- is the car up? (roscar + ping)")
         return None
     time.sleep(0.4)
-    cfg = C.build_live_cfg(args.variant, args.mag, args.bx, goal_y=args.by)
+    key = _VARIANT_KEYS.get(str(args.variant), str(args.variant))
+    if key not in POLICY_REGISTRY:
+        print("unknown policy %r; use 1, 2 or a registry key: %s"
+              % (args.variant, ", ".join(sorted(POLICY_REGISTRY))))
+        return None
+    policy, cfg = build_policy(key, args.mag, args.bx, goal_y=args.by)
     cfg.goal.goal_tol = args.tol
     cfg.goal.timeout_s = args.timeout
     live = C.LiveConfig()
@@ -102,12 +112,12 @@ def run(args):
         d["t"] = time.time()
         rec.append(d)
 
-    runner = PolicyRunner(args.variant, cfg, live, C.ObstacleConfig(), client,
+    runner = PolicyRunner(policy, cfg, live, C.ObstacleConfig(), client,
                           log=(print if args.verbose else (lambda m: None)),
                           pose_source=args.pose, on_step=on_step,
                           collision_estop=False)
-    print("RUN variant %d -> B=(%.2f,%.2f)  pose=%s mag=%.0f ..." % (
-        args.variant, args.bx, args.by, args.pose, args.mag))
+    print("RUN %s -> B=(%.2f,%.2f)  pose=%s mag=%.0f ..." % (
+        key, args.bx, args.by, args.pose, args.mag))
     try:
         summary = runner.run()
     finally:
@@ -159,7 +169,7 @@ def plot(rec, summary, args):
     a.plot(goal[0], goal[1], "g*", ms=22, label="goal B")
     a.set_aspect("equal"); a.grid(alpha=0.3); a.legend(loc="upper left")
     a.set_xlabel("x forward (m)"); a.set_ylabel("y left (m)")
-    a.set_title("variant %d  %s  reached=%s  path=%.1fm  clear=%.2fm" % (
+    a.set_title("%s  %s  reached=%s  path=%.1fm  clear=%.2fm" % (
         args.variant, args.pose, summary.get("reached"), plen, min(clr)))
     b = ax[1]
     b.plot(t, V, label="v (m/s)"); b.plot(t, W, label="w (rad/s)")
@@ -176,7 +186,7 @@ def plot(rec, summary, args):
         a.margins(0.2)
 
     os.makedirs(RESULTS, exist_ok=True)
-    tag = args.tag or ("v%d_%s_B%.1f_%.1f" % (args.variant, args.pose, args.bx, args.by))
+    tag = args.tag or ("%s_%s_B%.1f_%.1f" % (args.variant, args.pose, args.bx, args.by))
     png = os.path.join(RESULTS, tag + ".png")
     js = os.path.join(RESULTS, tag + ".json")
     # save the DATA first so a plotting hiccup never loses the run record
@@ -204,7 +214,9 @@ def plot(rec, summary, args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--variant", type=int, default=1, choices=[1, 2])
+    ap.add_argument("--variant", type=str, default="1",
+                    help="1 (=mpc_vw), 2 (=mpc_grid), or any registry key "
+                         "(mpc_vw_t, mpc_grid_t, your own model)")
     ap.add_argument("--bx", type=float, default=3.0, help="goal B forward x (m)")
     ap.add_argument("--by", type=float, default=0.0, help="goal B left y (m)")
     ap.add_argument("--pose", default="odom", choices=["odom", "lidar", "dead_reckon"])

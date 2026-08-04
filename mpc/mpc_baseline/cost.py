@@ -28,17 +28,37 @@ def goal_cost(states, goal, cost_cfg, dt):
     return running + terminal
 
 
-def obstacle_cost(states, field, robot_cfg, cost_cfg, dt):
+def obstacle_cost(states, field, robot_cfg, cost_cfg, dt, predict=False,
+                  pred_delay=0.0):
     """Soft barrier inside the buffer plus a hard collision flag.
 
     Returns (cost (K,), collided (K,) bool). A rollout is 'collided' if any of its
     states falls inside the inflated obstacle (clearance < 0); those get the huge
     cost_cfg.collision_cost so the argmin never selects a colliding rollout.
+
+    predict=True is the TIME-AWARE mode (the *_t variants): rollout step h is
+    scored against the field's constant-velocity prediction of the circles at
+    t + (h+1)*dt -- the moment the car would actually BE at that state -- instead
+    of the frozen current frame. With every tracked velocity 0 (a static world,
+    or the field's sighting/deadband gates closed) the two modes are identical.
     """
     K, H, _ = states.shape
-    pts = states[:, :, :2].reshape(-1, 2)                    # (K*H, 2)
-    clr = field.clearance(pts, robot_cfg.robot_radius,
-                          cost_cfg.extra_margin).reshape(K, H)
+    if predict and hasattr(field, "clearance_pred"):
+        # Step h of the rollout is reached (h+1)*dt after the plan's start pose
+        # -- PLUS pred_delay for the loop's dispatch buffering: in the live
+        # runner (and the buffered/disturbed sim) the plan starts executing one
+        # whole tick after the frame the circles came from, so scoring against
+        # (h+1)*dt left every prediction a tick behind the world (measured
+        # 2 ticks = 0.15-0.23 m total with the EMA-lag bug, in the dangerous
+        # cut-in-front direction). The unbuffered offline loop executes
+        # immediately: pred_delay stays 0 there.
+        dts = dt * (np.arange(H) + 1.0) + pred_delay
+        clr = field.clearance_pred(states[:, :, :2], dts,
+                                   robot_cfg.robot_radius, cost_cfg.extra_margin)
+    else:
+        pts = states[:, :, :2].reshape(-1, 2)                # (K*H, 2)
+        clr = field.clearance(pts, robot_cfg.robot_radius,
+                              cost_cfg.extra_margin).reshape(K, H)
 
     inside = clr < 0.0
     collided = inside.any(axis=1)
@@ -63,14 +83,16 @@ def obstacle_cost(states, field, robot_cfg, cost_cfg, dt):
     return cost, collided
 
 
-def total_cost_discrete(states, goal, field, robot_cfg, cost_cfg, dt):
+def total_cost_discrete(states, goal, field, robot_cfg, cost_cfg, dt,
+                        predict=False, pred_delay=0.0):
     """Full cost for the discrete variant. Returns (cost (K,), collided (K,)).
 
     No standing-still penalty: STOP keeps goal cost high far from B (never the
     argmin) and ~zero at B (correctly chosen), so a penalty would only fight settling.
     """
     g = goal_cost(states, goal, cost_cfg, dt)
-    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt)
+    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt,
+                                predict=predict, pred_delay=pred_delay)
     return g + o, collided
 
 
@@ -114,11 +136,12 @@ def control_cost(controls, cost_cfg, dt, u_prev=None):
 
 
 def total_cost_velocity(states, controls, goal, line, field, robot_cfg, cost_cfg,
-                        dt, u_prev=None):
+                        dt, u_prev=None, predict=False, pred_delay=0.0):
     """Full cost for the CONTINUOUS (v, w) sampling variant 1. Same goal + all-
     obstacle barrier as the discrete variant, plus cross-track (return to the A->B
     line) and control effort/smoothness. Returns (cost (K,), collided (K,))."""
     g = goal_cost(states, goal, cost_cfg, dt)
-    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt)
+    o, collided = obstacle_cost(states, field, robot_cfg, cost_cfg, dt,
+                                predict=predict, pred_delay=pred_delay)
     return (g + o + crosstrack_cost(states, line, cost_cfg, dt)
             + control_cost(controls, cost_cfg, dt, u_prev)), collided

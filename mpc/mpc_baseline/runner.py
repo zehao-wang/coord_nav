@@ -90,6 +90,10 @@ class PolicyRunner(object):
             cfg.mppi.dt = tick.period
         if hasattr(cfg, "rollout_dt"):          # discrete: same rule, see Variant2Policy
             cfg.rollout_dt = tick.period
+        if hasattr(cfg, "pred_extra_delay_s"):
+            # the plan dispatched NEXT tick executes one tick after the frame it
+            # was planned from -- obstacle predictions must look that far ahead
+            cfg.pred_extra_delay_s = tick.period
         if self.action_space == "velocity":
             # The car keep-alives each pulse for tick.action_duration (>1 tick), so a
             # single dropped command holds the last velocity instead of stuttering,

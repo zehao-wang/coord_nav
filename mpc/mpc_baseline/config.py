@@ -153,6 +153,17 @@ class Variant1Config:
                                       # 0.10 let the planner ask for turns twice as tight as
                                       # the car can do, which is why it spiralled.
     min_inner_frac: float = 0.1       # inner wheel speed >= this fraction of v (keeps it rolling)
+    predict_obstacles: bool = False   # True = the TIME-AWARE variant (mpc_vw_t): the
+                                      # obstacle cost evaluates rollout step h against the
+                                      # tracker's constant-velocity prediction at t+h*dt
+                                      # instead of the frozen current circles
+    pred_extra_delay_s: float = 0.0   # added to every prediction time: the loop's
+                                      # dispatch buffering. The live runner and the
+                                      # buffered (disturbed) sim start executing a plan
+                                      # ONE TICK after the frame it was planned from, so
+                                      # they set this to the tick period (runner.py /
+                                      # resolve_policy); the unbuffered offline loop
+                                      # executes immediately and leaves it 0
     robot: RobotConfig = field(default_factory=RobotConfig)
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     cost: CostConfig = field(default_factory=CostConfig)
@@ -178,6 +189,9 @@ class Variant2Config:
     horizon: int = 4                  # hops looked ahead
     samples: int = 1024               # sampled action sequences (if not exhaustive)
     exhaustive_cap: int = 20000       # enumerate all seqs when |A|^H <= this
+    predict_obstacles: bool = False   # True = the TIME-AWARE variant (mpc_grid_t);
+                                      # see Variant1Config.predict_obstacles
+    pred_extra_delay_s: float = 0.0   # dispatch buffering, see Variant1Config
     robot: RobotConfig = field(default_factory=RobotConfig)
     cost: CostConfig = field(default_factory=CostConfig)
     goal: GoalConfig = field(default_factory=GoalConfig)
@@ -219,6 +233,21 @@ class ObstacleConfig:
     mem_radius: float = 3.0           # drop remembered obstacles farther than this from the car
     merge_dist: float = 0.15          # fuse remembered circles closer than this (m)
     max_age_stale: float = 1.0        # ignore an /obstacles frame older than this (s)
+    # Constant-velocity tracking (used by the *_t time-aware policies; pure
+    # bookkeeping for everything else). Gates are what keep a STATIC world
+    # byte-identical to the frozen-world planner: a track's velocity reads 0
+    # until it has been sighted vel_min_sightings times AND its EMA speed clears
+    # vel_deadband.
+    vel_ema: float = 0.5              # EMA weight on each new raw velocity sample
+    vel_cap: float = 1.0              # m/s clamp: a bad association can't invent a sprinter
+    vel_min_sightings: int = 3        # frames a track must be seen before its v counts
+    vel_deadband: float = 0.04        # m/s below which a track is "static" (perception
+                                      # jitter on a real box measures well under this)
+    pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
+                                      # beyond ~2.5 s a constant-velocity guess is fiction
+                                      # (bounces, stops), so the prediction holds there.
+                                      # v1's 9.7 s horizon tail plans against the held
+                                      # position, not a 9.7 s straight-line ghost
 
 
 # --- the global tick -----------------------------------------------------

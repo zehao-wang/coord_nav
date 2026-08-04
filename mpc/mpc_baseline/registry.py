@@ -91,14 +91,26 @@ def build_policy(key, magnitude, goal_x, goal_y=0.0, step_duration=0.5,
     return policy, cfg
 
 
-def _mpc_build(variant):
+def _mpc_build(variant, predict=False):
     def build(magnitude, goal_x, goal_y=0.0, step_duration=0.5, allow_rotation=False):
         cfg = config.build_live_cfg(variant, magnitude, goal_x, goal_y=goal_y,
                                     step_duration=step_duration,
                                     allow_rotation=allow_rotation)
+        cfg.predict_obstacles = predict
         return make_policy(variant, cfg), cfg
     return build
 
 
 register("mpc_grid", "MPC grid (variant 2, baseline)", "discrete", _mpc_build(2))
 register("mpc_vw", "MPC velocity v,omega (variant 1, sampling)", "velocity", _mpc_build(1))
+# The TIME-AWARE ablations: identical sampler / cost weights / plant -- the ONE
+# difference is predict_obstacles=True, i.e. the obstacle cost scores rollout
+# step h against the field's constant-velocity prediction at t+h*dt (the
+# standard dynamic-obstacle MPC baseline) instead of the frozen current frame.
+# In a static world the velocity gates read 0 and these degenerate EXACTLY to
+# the plain variants (regression-tested), so one number isolates "considers
+# obstacle motion" as the only experimental variable.
+register("mpc_grid_t", "MPC grid + CV prediction (variant 2t)", "discrete",
+         _mpc_build(2, predict=True))
+register("mpc_vw_t", "MPC v,omega + CV prediction (variant 1t)", "velocity",
+         _mpc_build(1, predict=True))

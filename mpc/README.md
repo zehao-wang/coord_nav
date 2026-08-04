@@ -4,13 +4,19 @@
 
 - **任务**：B = 从当前位置**正前方几米**的一点（默认 3m，相对起点的坐标 `(前 x, 左 y)`）。直线上可能有障碍，要绕过去到 B。
 - **observation**：`/obstacles` 的碰撞圆 —— 每个障碍 `(x, y, r)`（米，base 系，x 前 y 左），就是 `carclient.obstacles().circles`，和 GUI 俯视图同一份数据，**~3Hz**。
-- **两个内置 policy**（都连续操控、到点前不停）：
+- **四个内置 policy**（都连续操控、到点前不停）：
   | key | 名字 | 控制 | 走哪个话题 |
   |---|---|---|---|
-  | `mpc_grid` | 变种2（离散 baseline） | 离散"跳格子"（8 个麦轮平移方向采样，取代价最小） | `/drive_action` |
-  | `mpc_vw` | 变种1（连续速度，**GUI 默认**） | 连续 `(v, ω)` **采样 MPC / DWA** | `/drive_wheels` 速度脉冲 |
+  | `mpc_grid` | 变种2（离散 baseline，**冻结世界**） | 离散"跳格子"（8 个麦轮平移方向采样，取代价最小） | `/drive_action` |
+  | `mpc_vw` | 变种1（连续速度，**GUI 默认**，冻结世界） | 连续 `(v, ω)` **采样 MPC / DWA** | `/drive_wheels` 速度脉冲 |
+  | `mpc_grid_t` | 变种2t（**时序**：恒速预测） | 同变种2，障碍按估计速度外推 | `/drive_action` |
+  | `mpc_vw_t` | 变种1t（时序：恒速预测） | 同变种1，障碍按估计速度外推 | `/drive_wheels` 速度脉冲 |
 
-> 两者是**同一个采样内核**，只是动作空间不同（离散动作 vs 连续 (v,ω)）：采样 K 条控制序列 → rollout → 对**所有障碍圆**+目标+A→B 直线打分 → argmin → 暖启动。无 NLP、无兜底规划器。
+> 四个是**同一个采样内核**，两个维度各二选一：动作空间（离散 vs 连续 (v,ω)）×
+> 障碍模型（**冻结当前帧** vs **`_t` 时序版**——`ObstacleField` 从连续帧差分出每个障碍的
+> 恒速估计,rollout 第 h 步对着障碍在 t+h·dt 的预测位置打分,即动态障碍 MPC 文献里的标准
+> CV-prediction 基线）。`_t` 与原版**只差这一个变量**（静态世界里逐字节等价,有回归测试），
+> 是干净的受控消融。采样 K 条控制序列 → rollout → 打分 → argmin → 暖启动。无 NLP、无兜底规划器。
 
 ---
 
@@ -66,10 +72,11 @@ python scripts/benchmark.py --suite realistic --disturbed   # 真实机制 + 执
 
 ### 测试场 TestField（动态障碍 + 遮挡，输入与真机一致）
 ```bash
-python scripts/run_field.py                     # 两个 baseline：5 原型 + 10 随机 case × 20 seeds
+python scripts/run_field.py                     # 两个冻结世界 baseline：5 原型 + 10 随机 × 20 seeds
+python scripts/run_field.py --policy mpc_grid_t --policy mpc_vw_t   # 加时序版同表对比
 python scripts/run_field.py --policy my_model   # 你的模型即插即用（registry 注册后）
 python scripts/run_field.py --anim /tmp/anims   # 每 case 逐帧动画（gif；--anim-fmt mp4）
-python scripts/run_field.py --mem 0             # 只用当前帧规划（量化记忆尾迹）
+python scripts/run_field.py --mem 0             # 只用当前帧规划（也会关掉 _t 的速度估计）
 ```
 
 `mpc_baseline/testfield.py`。场地**默认实车忠实**（和 benchmark 默认完美执行相反）：
@@ -81,22 +88,26 @@ pymunk 刚体（弹性互撞/撞墙反弹，随机 case 物理自洽、seed 可�
 调试）；感知噪声 `--noise-xy/--dropout` 是**未标定旋钮**，默认 0（可从 run.json 的实录
 帧拟合，待做）。已知与真机的差距：位姿无漂移、无扫描-位姿时间戳偏斜。
 
-当前 baseline 在测试场（15 cases × 20 seeds = 300 局/策略，`--seeds/--random/--rand-seed`
-默认即协议）：
+四个 baseline 在测试场（15 cases × 20 seeds = 300 局/策略，实车忠实模式，
+`--seeds/--random/--rand-seed` 默认即协议，成功/碰撞）：
 
-| 配置 | 变种2 成功/碰撞 | 变种1 成功/碰撞 |
+| | 冻结世界 | **`_t` 时序（恒速预测）** |
 |---|---|---|
-| 默认（实车忠实） | 0.757 / 0.243 | 0.530 / 0.437 |
-| `--mem 0` 只看当前帧 | **0.837 / 0.163** | 0.580 / 0.380 |
-| `--perfect-exec` | 0.867 / 0.133 | 0.557 / 0.443 |
+| 变种2 grid | 0.740 / 0.260 | **0.977 / 0.023** |
+| 变种1 vw | 0.537 / 0.440 | **0.867 / 0.100** |
 
-> 三个发现：**(1) 两个 baseline 对拦截型动态障碍都不稳健** —— rollout 把障碍当静止，
-> `cross_slow`（慢速横穿拦截）v2 碰 0.85、v1 1.00 全灭；这是静态套件盖住的真实能力
-> 缺口，也是测试场存在的意义。**(2) 1.5s 障碍记忆在动态世界是负资产**：`--mem 0` 反而
-> 更安全（v2 碰撞 0.243→0.163、v1 0.437→0.380）——移动障碍在 odom 记忆里拖出旧位置
-> 尾迹，把软墙钉在障碍早已离开的地方。**(3) v1 的动态碰撞主要不是执行扰动造成的**
-> （`--perfect-exec` 下仍 0.443）——是"对着上一帧的世界规划"本身。要在动态场里赢，
-> policy 需要估计障碍速度并外推（Observation 里有连续帧可差分，接口不用改）。
+> 逐 case 看：`mpc_grid_t` 在 **15 个 case 里 13 个零碰撞**（拦截型 `cross_slow`
+> 0.85→0.00、`diagonal` 0.65→0.00、`occluded_oncoming` 0.20→0.00 —— coast 预测让
+> 被遮挡的 mover 在记忆里继续走,穿遮挡跟踪）。残余碰撞（rand03 0.20、rand07 0.15）
+> 全是 mover **中途弹墙**的 case —— 恒速模型的固有边界,如实保留。
+>
+> 三个结论：**(1) 冻结世界的 baseline 对拦截型动态障碍不稳健**（`cross_slow` v2 碰
+> 0.85、v1 全灭）——这是静态套件盖住的能力缺口。**(2) 有了速度跟踪,1.5s 障碍记忆从
+> 负资产变回正资产**：`_t` + `--mem 0` 退化回原版数字（无记忆→无法跨帧差分速度;
+> grid_t 带记忆碰 0.023 vs 无记忆 0.163）——0.9.16 发现的"记忆尾迹"问题由 coast 关联
+> 根治,不再需要牺牲记忆。**(3) 时间线必须对齐**：缓冲派发差一拍 + EMA 位置滞后一拍,
+> 两个"一拍"曾吃掉大半收益（`pred_extra_delay_s` + raw 观测外推修正,见 CHANGELOG
+> 0.9.17）。学习型 policy 若要超过 `_t`,得赢在恒速模型失效处（弹墙、变速、意图）。
 
 ### GUI（推荐，实车）
 ```bash
@@ -108,6 +119,7 @@ bash gui/run_gui.sh          # 连车的 master，用当前 $DISPLAY（先按顶
 ```bash
 roscar
 python ../smoke/policy_run.py --variant 1 --bx 3 --by 0 --pose odom --mag 40   # 跑一次+存图+陀螺校验
+python ../smoke/policy_run.py --variant mpc_grid_t --bx 3 --mag 40             # --variant 接受任意 registry key
 python scripts/run_live.py --variant 2 --magnitude 40                          # 变种2 baseline
 ```
 
