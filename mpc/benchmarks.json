@@ -1,0 +1,193 @@
+{
+ "policies": {
+  "mpc_grid": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.0,
+     "episodes": 80,
+     "mean_min_clearance": 0.287,
+     "mean_time_s": 8.76,
+     "success": 1.0
+    },
+    "L2_static_tight": {
+     "collision": 0.0,
+     "episodes": 120,
+     "mean_min_clearance": 0.291,
+     "mean_time_s": 4.19,
+     "success": 1.0
+    },
+    "L3_dyn_single": {
+     "collision": 0.18,
+     "episodes": 200,
+     "mean_min_clearance": 0.475,
+     "mean_time_s": 8.77,
+     "mean_turn_deg": 20.3,
+     "success": 0.82,
+     "tail_wander_m": 0.165
+    },
+    "L4_dyn_complex": {
+     "collision": 0.135,
+     "episodes": 200,
+     "mean_min_clearance": 0.252,
+     "mean_time_s": 9.27,
+     "mean_turn_deg": 21.3,
+     "success": 0.865,
+     "tail_wander_m": 0.217
+    },
+    "overall": {
+     "collision": 0.105,
+     "episodes": 600,
+     "mean_min_clearance": 0.34,
+     "mean_time_s": 7.91,
+     "success": 0.895
+    }
+   },
+   "commit": "efbd2b5",
+   "date": "2026-08-04",
+   "protocol": 1,
+   "seeds": 20
+  },
+  "mpc_grid_t": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.0,
+     "episodes": 80,
+     "mean_min_clearance": 0.287,
+     "mean_time_s": 8.76,
+     "success": 1.0
+    },
+    "L2_static_tight": {
+     "collision": 0.0,
+     "episodes": 120,
+     "mean_min_clearance": 0.291,
+     "mean_time_s": 4.19,
+     "success": 1.0
+    },
+    "L3_dyn_single": {
+     "collision": 0.0,
+     "episodes": 200,
+     "mean_min_clearance": 0.523,
+     "mean_time_s": 8.73,
+     "mean_turn_deg": 19.7,
+     "success": 1.0,
+     "tail_wander_m": 0.16
+    },
+    "L4_dyn_complex": {
+     "collision": 0.0,
+     "episodes": 200,
+     "mean_min_clearance": 0.312,
+     "mean_time_s": 9.37,
+     "mean_turn_deg": 23.1,
+     "success": 1.0,
+     "tail_wander_m": 0.158
+    },
+    "overall": {
+     "collision": 0.0,
+     "episodes": 600,
+     "mean_min_clearance": 0.378,
+     "mean_time_s": 8.04,
+     "success": 1.0
+    }
+   },
+   "commit": "efbd2b5",
+   "date": "2026-08-04",
+   "protocol": 1,
+   "seeds": 20
+  },
+  "mpc_vw": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.1125,
+     "episodes": 80,
+     "mean_min_clearance": 0.267,
+     "mean_time_s": 11.23,
+     "success": 0.85
+    },
+    "L2_static_tight": {
+     "collision": 0.6,
+     "episodes": 120,
+     "mean_min_clearance": 0.126,
+     "mean_time_s": 4.76,
+     "success": 0.35
+    },
+    "L3_dyn_single": {
+     "collision": 0.27,
+     "episodes": 200,
+     "mean_min_clearance": 0.401,
+     "mean_time_s": 10.35,
+     "mean_turn_deg": 5.7,
+     "success": 0.725,
+     "tail_wander_m": 0.095
+    },
+    "L4_dyn_complex": {
+     "collision": 0.45,
+     "episodes": 200,
+     "mean_min_clearance": 0.195,
+     "mean_time_s": 11.84,
+     "mean_turn_deg": 7.0,
+     "success": 0.485,
+     "tail_wander_m": 0.219
+    },
+    "overall": {
+     "collision": 0.375,
+     "episodes": 600,
+     "mean_min_clearance": 0.264,
+     "mean_time_s": 10.26,
+     "success": 0.5867
+    }
+   },
+   "commit": "efbd2b5",
+   "date": "2026-08-04",
+   "protocol": 1,
+   "seeds": 20
+  },
+  "mpc_vw_t": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.1125,
+     "episodes": 80,
+     "mean_min_clearance": 0.267,
+     "mean_time_s": 11.23,
+     "success": 0.85
+    },
+    "L2_static_tight": {
+     "collision": 0.6,
+     "episodes": 120,
+     "mean_min_clearance": 0.126,
+     "mean_time_s": 4.76,
+     "success": 0.35
+    },
+    "L3_dyn_single": {
+     "collision": 0.04,
+     "episodes": 200,
+     "mean_min_clearance": 0.452,
+     "mean_time_s": 10.68,
+     "mean_turn_deg": 5.9,
+     "success": 0.905,
+     "tail_wander_m": 0.102
+    },
+    "L4_dyn_complex": {
+     "collision": 0.11,
+     "episodes": 200,
+     "mean_min_clearance": 0.28,
+     "mean_time_s": 11.31,
+     "mean_turn_deg": 6.8,
+     "success": 0.855,
+     "tail_wander_m": 0.132
+    },
+    "overall": {
+     "collision": 0.185,
+     "episodes": 600,
+     "mean_min_clearance": 0.311,
+     "mean_time_s": 10.45,
+     "success": 0.77
+    }
+   },
+   "commit": "efbd2b5",
+   "date": "2026-08-04",
+   "protocol": 1,
+   "seeds": 20
+  }
+ },
+ "protocol_version": 1
+}

@@ -28,7 +28,14 @@ roscar && cd mpc
 python scripts/run_sim.py --variant 1 --scenario slalom --plot /tmp/v1.png   # 单场景+画图
 python scripts/benchmark.py --json /tmp/bench.json          # ↓ 下表紧套件两行，原样复现
 python scripts/benchmark.py --suite realistic --disturbed   # 真实机制 + 执行扰动
+python scripts/benchmark_table.py                           # 更新正式基准榜（见下）
 ```
+
+> **正式基准榜在 [`BENCHMARKS.md`](BENCHMARKS.md)**（`benchmarks.json` 为机器可读源）：
+> 固定 eval protocol + 固定分级 set（L1 静态-常规 → L4 动态-复合,同 seed、全部实车忠实
+> 模式、registry 即插即用契约构造）,**现在和未来的每个 policy 都评在这一张表里**。
+> 协议带版本号,行记 commit/日期;全程确定性 → `benchmark_table.py --check KEY` 即回归
+> 检测。本 README 下面的表是历史演进的说明性数字（sim profile / 分套件）,横向比较以榜为准。
 
 当前基线（标定后的被控对象模型；**上面的命令原样复现下表** —— `--seeds` 默认 20，
 紧套件 20×6=120 局、真实套件 20×4=80 局；`--seeds 1` 才是单 seed 快看）：
@@ -177,6 +184,7 @@ python scripts/run_sim.py --policy my_model --scenario slalom --plot /tmp/m.png
 python scripts/benchmark.py --policy my_model                    # 和两个 baseline 同表对比
 python scripts/benchmark.py --policy my_model --plan-dt 0.333    # 按实车节奏比
 python scripts/run_field.py --policy my_model                    # 动态障碍测试场（见上）
+python scripts/benchmark_table.py --policy my_model              # 上正式基准榜（BENCHMARKS.md）
 ```
 ```python
 from mpc_baseline import eval as E
@@ -271,6 +279,7 @@ planner 的模型必须和真车一致,否则闭环性能靠运气。**被控对
 | `mpc_baseline/sim.py` / `eval.py` | 离线运动学仿真 + 场景 / 指标汇总对比（`resolve_policy` 是唯一的 policy 构造入口）|
 | `mpc_baseline/testfield.py` | **测试场**：pymunk 动态障碍 + 遮挡 + 实车忠实闭环，任意注册 policy 即插即用 |
 | `scripts/run_field.py` | 测试场 CLI：battery / 随机 case / `--mem` 消融 / 逐帧动画 |
+| `mpc_baseline/benchtable.py` / `scripts/benchmark_table.py` | **正式基准榜**：固定协议 + 分级 set，`BENCHMARKS.md`/`benchmarks.json`，`--check` = 回归检测 |
 | `mpc_baseline/actuators.py` | `VelocityPulseActuator`(变种1) / `DriveActionActuator`(变种2) |
 | `scripts/` `../smoke/` | `run_sim`·`benchmark`·`run_live`·`calibrate_goal` / `policy_run`·`calib_gyro` |
 

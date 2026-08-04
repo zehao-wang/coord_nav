@@ -1,0 +1,25 @@
+# MPC benchmark -- fixed eval protocol + tiered set, v1
+
+**Do not edit numbers by hand** -- update with `python scripts/benchmark_table.py [--policy KEY]`, verify a row with `--check KEY`. Source of truth: `benchmarks.json`. Every current and FUTURE policy is evaluated here, same seeds, same set.
+
+Protocol: registry-built policies (LIVE profile, magnitude 40 -- the plug-in contract), live-faithful execution everywhere (buffered tick + measured disturbance; the perfect-execution world has mis-ranked controllers twice and is not part of the protocol), 20 seeds per case, collision = footprint contact. Deterministic per code version: a `--check` mismatch means behaviour changed.
+
+Difficulty tiers (graded by construction, fixed generator seeds):
+
+| tier | contents | eps/policy |
+|---|---|---|
+| **L1 static-open** | realistic suite: 4 static worlds, B=3 m | 80 |
+| **L2 static-tight** | tight suite: 6 static worlds, B=1 m, partly beyond the turn radius | 120 |
+| **L3 dyn-single** | cross_slow/cross_fast/oncoming/diagonal + 6 random single-mover cases (seed 1003) | 200 |
+| **L4 dyn-complex** | occluded_oncoming + 9 random clutter cases: 1-2 statics AND 1-2 movers (seed 1004) | 200 |
+
+## Results (success / collision)
+
+| policy | L1 | L2 | L3 | L4 | overall | L3+L4 turn(deg) | L3+L4 tail(m) | commit | date |
+|---|---|---|---|---|---|---|---|---|---|
+| `mpc_grid` | 1.000 / 0.000 | 1.000 / 0.000 | 0.820 / 0.180 | 0.865 / 0.135 | 0.895 / 0.105 | 20.8 | 0.191 | efbd2b5 | 2026-08-04 |
+| `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 21.4 | 0.159 | efbd2b5 | 2026-08-04 |
+| `mpc_vw` | 0.850 / 0.113 | 0.350 / 0.600 | 0.725 / 0.270 | 0.485 / 0.450 | 0.587 / 0.375 | 6.3 | 0.157 | efbd2b5 | 2026-08-04 |
+| `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.905 / 0.040 | 0.855 / 0.110 | 0.770 / 0.185 | 6.3 | 0.117 | efbd2b5 | 2026-08-04 |
+
+`turn` = mean direction change between trajectory steps (smoothness, dynamic tiers); `tail` = mean |cross-track| over each episode's last third (return-to-line, dynamic tiers).

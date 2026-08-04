@@ -3,6 +3,53 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.19 - 2026-08-04 - the fixed benchmark: one eval protocol, one tiered set, one committed table
+
+`BENCHMARKS.md` + `benchmarks.json` + `scripts/benchmark_table.py` +
+`mpc_baseline/benchtable.py`. Every current and future policy is evaluated on
+the SAME protocol and SAME set, and the results live in one committed table --
+no more hand-edited README cells or scratch-log numbers that are comparable
+only on trust.
+
+Protocol v1 (versioned; any change bumps it and marks old rows STALE):
+registry-built policies at the live profile (magnitude 40 -- the plug-in
+contract), live-faithful execution EVERYWHERE (the perfect-execution world has
+mis-ranked controllers twice: w_cont 0.9.3, v2's deterministic limit cycles --
+it is not part of the protocol), 20 seeds, footprint-contact collisions, and a
+DIFFICULTY-TIERED set graded by construction (not by measured hardness, which
+would drift as policies improve):
+
+    L1 static-open    realistic suite, 4 worlds, B=3 m           ( 80 eps)
+    L2 static-tight   tight suite, 6 worlds, partly beyond the
+                      turn radius                                 (120 eps)
+    L3 dyn-single     4 mover archetypes + 6 random single-mover
+                      cases (gen seed 1003)                       (200 eps)
+    L4 dyn-complex    occluded_oncoming + 9 random clutter cases,
+                      1-2 statics AND 1-2 movers (gen seed 1004)  (200 eps)
+
+The whole thing is deterministic per code version, so
+`benchmark_table.py --check KEY` re-runs a row and byte-compares it: the table
+doubles as a full-stack regression detector.
+
+First edition (commit efbd2b5 rows):
+
+    mpc_grid     1.000/0.000  1.000/0.000  0.820/0.180  0.865/0.135  overall 0.895/0.105
+    mpc_grid_t   1.000/0.000  1.000/0.000  1.000/0.000  1.000/0.000  overall 1.000/0.000
+    mpc_vw       0.850/0.113  0.350/0.600  0.725/0.270  0.485/0.450  overall 0.587/0.375
+    mpc_vw_t     0.850/0.113  0.350/0.600  0.905/0.040  0.855/0.110  overall 0.770/0.185
+
+Reading the table: the vw rows' L1/L2 cells are IDENTICAL between plain and _t
+-- the static byte-equivalence guarantee, now visible in published numbers.
+The difficulty gradient orders correctly for the differential-drive variants
+(L1 > L3 > L4, L2 hardest = physical limits). Two caveats recorded: the
+static cells run the LIVE profile, so they differ from the README's historical
+sim-profile rows by design; and mpc_grid_t sits at the CEILING (1.000 across
+all 400 dynamic episodes -- the new tier generator seeds happen not to produce
+the wall-bounce cases that caught it in the 0.9.17 battery), so a future
+policy that beats it needs protocol v2 with a harder L4 (faster movers,
+mid-course bounces, perception noise once fitted). 28 tests (set stability,
+tier construction, update/check round-trip, tamper detection).
+
 ## 0.9.18 - 2026-08-04 - smoothness screening: L1 cross-track shipped, direction penalty rejected-with-data
 
 Two behaviour reports from watching the field animations: vw meanders beside
