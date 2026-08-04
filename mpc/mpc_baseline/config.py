@@ -268,7 +268,9 @@ class LiveConfig:
                                       # full yaw to w_max 1.2, turn radius 0.30 m.
                                       # Tight suite over 20 seeds: 0.333 at magnitude 20 (all
                                       # timeouts -- too slow to steer, and only 0.176 rad/s of
-                                      # yaw), 0.992 at 30, 0.975 at 40. Below magnitude 17.4 the
+                                      # yaw), 0.992 at 30, 0.975 at 40 (sweep taken under the
+                                      # pre-0.9.15 centre-based collision metric: fine for the
+                                      # ranking, not as safety rates). Below magnitude 17.4 the
                                       # achievable yaw is exactly zero and build_live_cfg
                                       # refuses. "Start small" was 20, chosen when the old
                                       # proportional model claimed it meant 0.10 m/s; measured,

@@ -3,6 +3,66 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.15 - 2026-08-04 - eval harness audit: honest collision metric, runnable protocol, guard defaults
+
+A 13-agent adversarial audit (4 review dimensions, every finding independently
+verified by execution, 8/8 confirmed, 0 refuted) found the PLANNER correct -- the
+mecanum mixing, plant inversion, AR(1) sampler and dt-integrated costs all check
+out numerically, and every published number reproduces exactly -- but the
+EVALUATION HARNESS was quietly overstating variant 1 and could not be re-run by
+anyone else. All fixes below; regression tests in `mpc/tests/` pin each one.
+
+- **Collision = footprint contact, not centre penetration** (`sim.py`). The sim
+  flagged a collision only when the footprint CENTRE entered the obstacle circle,
+  so an episode could end "success" with the obstacle surface 12 cm inside the
+  car -- states the live guard estops on. Under the honest metric (edge reaches
+  `robot_radius`, exactly the live guard's test) the v1 tight-suite numbers move
+  0.992/0.008 -> 0.725/0.275 (default) and 0.767/0.167 -> 0.492/0.500
+  (disturbed); same trajectories, honest ruler. v2 is 0.000 contact under BOTH
+  metrics across all 400 episodes -- the "v2 is the robust baseline" ranking not
+  only survives, it strengthens. README table republished from fresh 20-seed runs.
+- **The published protocol is now runnable**: `benchmark.py --seeds` (default 20)
+  reproduces the README table as-is -- it used to run seed 0 only, printing
+  exactly the single-seed numbers the README warns against, and the 120-episode
+  table required a hand-written loop that was never committed. The
+  realistic-regime suite is now IN THE REPO (`sim.realistic_scenarios`,
+  `--suite realistic`): the old "realistic 1.000/0" row came from ad-hoc worlds
+  nobody could re-run. Re-measured: 1.000/0.000 default (both variants),
+  v1 0.950/0.025 disturbed, v2 1.000/0.000 -- the claim was honest, and now it
+  is checkable. Plots also stop drawing goal B at a hardcoded 1 m.
+- **`run_policy` seeds the policy** (`eval._seed_policy`). The documented
+  third-party comparison path (`benchmark.py --policy X`, `E.run_policy`) never
+  passed a seed to the policy -- `build_policy`'s signature is a fixed contract
+  without one -- so undisturbed multi-seed evaluation of ANY registered model was
+  N byte-identical copies presented as N trials. This is the same bug class
+  0.9.5 fixed for `run_variant`; it had recurred one path over. Now
+  `seed()`/`rng` on the policy is seeded per episode.
+- **Disturbed eval runs discrete policies at the real tick** (`eval.py`). The
+  "live-faithful" v2 row closed the loop at step_duration=0.5 s -- a 2 Hz cadence
+  the car never runs, with noise constants fitted per 1/3 s tick injected per
+  0.5 s step -- and the offline `--policy mpc_grid --disturbed` screening path
+  planned 0.5 s hops while executing 1/3 s ones (the exact 50% over-prediction
+  the runner's `rollout_dt` was introduced to fix, surviving offline). Both now
+  execute AND roll out at `TickConfig.period`, like the runner. v2 disturbed
+  stays 1.000/0.000 at the true cadence, so no prior conclusion flips.
+- **`policy_run.py` collision guard defaults ON** (`--no-guard` to disable). The
+  README-recommended live command still shipped the pre-incident guard-off
+  default with the already-repudiated "redundant, false-tripping" comment -- the
+  GUI default was flipped after the 2026-07-25 penetration incident, this CLI
+  was missed.
+- **Perception outage no longer traps `run()`** (`runner.py`). The NOFRAME
+  branch `continue`d before the abort/timeout/link checks, so with perception
+  dead the loop held forever: GUI Stop was ignored, `timeout_s` unenforced, and
+  the link-loss estop unreachable during the exact outage it exists for (the car
+  itself did brake via the keep-alive; the workstation loop was immortal). The
+  exits now run inside the NOFRAME branch too.
+- Known remainders, deliberately unfixed: `Policy.reset()` still has no caller
+  (fresh-instance-per-run remains the contract), perception noise
+  (`noise_xy`/`dropout`) still unexercised in both eval modes, the collision
+  guard still fires on current-frame circles only, and v2's undisturbed rows are
+  deterministic (effective n=6 -- now documented in the README instead of
+  implied to be 120 samples).
+
 ## 0.9.14 - 2026-08-04 - live A/B go-around: both variants clean; regime claims hold
 
 Operator-run A/B with a real obstacle (~1 m ahead, B = 3 m, magnitude 40, guard on),

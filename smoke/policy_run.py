@@ -82,8 +82,11 @@ def run(args):
     live.magnitude = args.mag
     live.tick.rate_hz = args.tick_hz
     live.execute_steps = args.exec_steps
-    # Guard OFF by default: obstacle circles already carry margin + planner inflates, so
-    # the guard is redundant and was false-tripping mid-go-around. --guard re-arms it.
+    # Guard ON by default, matching LiveConfig and the GUI. This flag shipped OFF
+    # under a "redundant, false-tripping" rationale that a real run then repudiated
+    # (output/2026-07-25_20-01-44: 126 mm of the 130 mm footprint inside an obstacle
+    # for 3 ticks, the guard would have fired on all three) -- the GUI default was
+    # flipped after that incident but this CLI kept the pre-incident default.
     live.collision_abort = args.guard
 
     rec = []
@@ -212,9 +215,12 @@ def main():
                     help="GLOBAL tick rate; must equal the car's perception rate")
     ap.add_argument("--exec-steps", type=int, default=1,
                     help="planned steps to apply before re-planning (1 = tight closed loop)")
-    ap.add_argument("--guard", action="store_true",
-                    help="re-arm the collision guard (OFF by default -- obstacle "
-                         "circles already carry margin; the guard was false-tripping)")
+    ap.add_argument("--guard", dest="guard", action="store_true", default=True,
+                    help="collision guard (ON by default, like the GUI, since the "
+                         "2026-07-25 penetration incident)")
+    ap.add_argument("--no-guard", dest="guard", action="store_false",
+                    help="disable the collision guard for this run (the soft-stop "
+                         "near obstacles; only for controlled experiments)")
     ap.add_argument("--tag", default=None, help="output filename tag")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Benchmark policies over the simulator suite and compare them.
 
-    python scripts/benchmark.py                       # table for both variants
+    python scripts/benchmark.py                       # the README table: 20 seeds x suite
+    python scripts/benchmark.py --seeds 1             # quick single-seed look
+    python scripts/benchmark.py --suite realistic     # the realistic-regime suite (B=3m)
     python scripts/benchmark.py --json out.json       # also dump metrics
-    python scripts/benchmark.py --plots plotdir/      # per-scenario path plots
+    python scripts/benchmark.py --plots plotdir/      # per-scenario path plots (seed 0)
     python scripts/benchmark.py --policy my_model     # add YOUR registered model
     python scripts/benchmark.py --policy my_model --no-builtins   # only yours
 
@@ -13,6 +15,11 @@ policy registered in mpc_baseline/registry.py can join the table via --policy
 (repeatable). Comparability: --variant defaults to the SIM profile (v_max 0.22)
 while --policy always builds the LIVE profile; with --live-profile both use
 LiveConfig.magnitude = 40 and the numbers are directly comparable.
+
+--seeds defaults to 20 so the shipped command reproduces the README's
+20-seeds-x-suite protocol as-is: this script used to run seed 0 only, printing
+exactly the single-seed numbers the README warns against, and the published
+table needed a hand-written loop nobody else had.
 """
 
 import os
@@ -23,10 +30,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from mpc_baseline import eval as E
 from mpc_baseline.registry import POLICY_REGISTRY
-from mpc_baseline.sim import default_scenarios, goal_from_start
+from mpc_baseline.sim import default_scenarios, realistic_scenarios, goal_from_start
 
 
-def _plot_all(results_by_variant, scenarios, plotdir):
+def _plot_all(results_by_variant, scenarios, plotdir, goal_dist):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -43,7 +50,9 @@ def _plot_all(results_by_variant, scenarios, plotdir):
             tr = rs[i].traj
             ax.plot(tr[:, 0], tr[:, 1], "-o", ms=2, label="%s (%s)" % (
                 label, "R" if rs[i].reached else ("C" if rs[i].collided else "x")))
-        goal = goal_from_start(world.start, 1.0)
+        # the ACTUAL goal, not a hardcoded 1 m: --goal-dist 3 used to draw the
+        # star at 1 m while trajectories continued to 3 m, misgrading every plot
+        goal = goal_from_start(world.start, goal_dist)
         ax.plot(0, 0, "ks"); ax.plot(goal[0], goal[1], "g*", ms=15)
         ax.set_aspect("equal"); ax.grid(True, alpha=0.3); ax.legend()
         ax.set_title(world.name)
@@ -54,7 +63,16 @@ def _plot_all(results_by_variant, scenarios, plotdir):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--goal-dist", type=float, default=1.0)
+    ap.add_argument("--goal-dist", type=float, default=None,
+                    help="B forward distance (m); default 1.0 for the tight suite, "
+                         "3.0 for --suite realistic")
+    ap.add_argument("--suite", choices=("tight", "realistic"), default="tight",
+                    help="tight = the built-in stress suite (obstacles at 0.4-0.7 m, "
+                         "some beyond the car's turn radius); realistic = the regime "
+                         "the car actually drives (B=3 m, obstacles 1.2-1.5 m)")
+    ap.add_argument("--seeds", type=int, default=20,
+                    help="run seeds 0..N-1 and aggregate (default 20 = the README "
+                         "protocol; per-scenario rows and plots show seed 0)")
     ap.add_argument("--live-profile", action="store_true")
     ap.add_argument("--policy", action="append", default=[],
                     help="registry key to add to the table (repeatable). Choices: %s"
@@ -84,25 +102,44 @@ def main():
         print("--no-builtins needs at least one --policy")
         sys.exit(2)
 
-    scenarios = default_scenarios(args.goal_dist)
-    by = {}
-    if not args.no_builtins:
-        by["v2-grid"] = E.run_variant(2, scenarios, live=args.live_profile,
-                                      goal_dist=args.goal_dist, plan_dt=args.plan_dt,
-                                      disturbed=args.disturbed)
-        by["v1-vw"] = E.run_variant(1, scenarios, live=args.live_profile,
-                                    goal_dist=args.goal_dist, plan_dt=args.plan_dt,
-                                    disturbed=args.disturbed)
-    for key in args.policy:
-        by[key] = E.run_policy(key, scenarios, goal_dist=args.goal_dist,
-                               magnitude=args.magnitude, plan_dt=args.plan_dt,
-                               disturbed=args.disturbed)
-    E.print_table(by)
+    if args.seeds < 1:
+        print("--seeds must be >= 1")
+        sys.exit(2)
+    goal_dist = args.goal_dist if args.goal_dist is not None else (
+        3.0 if args.suite == "realistic" else 1.0)
+    scenarios = (realistic_scenarios(goal_dist) if args.suite == "realistic"
+                 else default_scenarios(goal_dist))
+
+    by = {}          # label -> episodes across ALL seeds (what the aggregate is over)
+    seed0 = {}       # label -> seed-0 episodes (per-scenario rows + plots)
+    for seed in range(args.seeds):
+        if not args.no_builtins:
+            for label, variant in (("v2-grid", 2), ("v1-vw", 1)):
+                rs = E.run_variant(variant, scenarios, live=args.live_profile,
+                                   goal_dist=goal_dist, plan_dt=args.plan_dt,
+                                   disturbed=args.disturbed, seed=seed)
+                by.setdefault(label, []).extend(rs)
+                seed0.setdefault(label, rs)
+        for key in args.policy:
+            rs = E.run_policy(key, scenarios, goal_dist=goal_dist,
+                              magnitude=args.magnitude, plan_dt=args.plan_dt,
+                              disturbed=args.disturbed, seed=seed)
+            by.setdefault(key, []).extend(rs)
+            seed0.setdefault(key, rs)
+
+    if args.seeds == 1:
+        E.print_table(by)
+    else:
+        print("\n[seed 0 of %d]" % args.seeds)
+        E.print_table(seed0, scenario_rows=True, aggregate=False)
+        print("\n=== Aggregate over %d seeds x %d scenarios = %d episodes ==="
+              % (args.seeds, len(scenarios), args.seeds * len(scenarios)))
+        E.print_table(by, scenario_rows=False)
     if args.json:
         E.to_json(by, args.json)
         print("\nwrote %s" % args.json)
     if args.plots:
-        _plot_all(by, scenarios, args.plots)
+        _plot_all(seed0, scenarios, args.plots, goal_dist)
 
 
 if __name__ == "__main__":

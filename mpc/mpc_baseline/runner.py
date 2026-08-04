@@ -280,6 +280,28 @@ class PolicyRunner(object):
                                "timing": {"wait_ms": 1e3 * (t_tick - t_wait0)},
                                "flags": ["NOFRAME"]})
                     t_tick_prev = t_tick
+                    # The run's EXITS must stay reachable with no frames coming.
+                    # They used to live after the frame-arrival gate only, so a
+                    # dead perception node / dropped car WiFi left run() holding
+                    # forever: GUI Stop was ignored, timeout_s was unenforced, and
+                    # the link-loss estop never fired during the exact outage it
+                    # exists for (the car itself does brake -- _hold() plus the
+                    # car-side keep-alive expiring -- but the loop was immortal).
+                    if self._abort:
+                        reason = "aborted"
+                        tlog.tick({"tick": n_tick, "t_s": t_tick - t0,
+                                   "ev": "ABORT", "flags": ["ABORT", "NOFRAME"]})
+                        break
+                    if time.monotonic() - t0 > t_end:
+                        reason = "timeout"
+                        tlog.tick({"tick": n_tick, "t_s": t_tick - t0,
+                                   "ev": "TIMEOUT", "flags": ["TIMEOUT", "NOFRAME"]})
+                        break
+                    if self._link_bad():
+                        tlog.tick({"tick": n_tick, "t_s": t_tick - t0,
+                                   "ev": "LINKLOST", "flags": ["LINKLOST", "NOFRAME"]})
+                        self.client.estop()
+                        return self._summary("link_lost_estop", False, goal, t0)
                     continue
                 # Timing breakdown of the tick, so a log can show where the period
                 # went and whether the loop overran (planning + grace > period, which

@@ -187,7 +187,13 @@ def run_episode(sim, policy, variant, obs_cfg, goal_cfg, plan_dt=0.25,
 
         clr = sim.true_min_clearance()
         min_clr = min(min_clr, clr)
-        if clr < 0.0:
+        # Contact = the obstacle edge reaches the FOOTPRINT, the same test the live
+        # guard aborts on (runner._imminent_collision, margin 0). The old `clr < 0`
+        # only fired once the footprint CENTRE was inside the obstacle, so an
+        # episode could end "success" with the surface 12 cm into the car: v1's
+        # published tight-suite collision rates were 0.008/0.167 under that metric
+        # and are 0.275/0.500 under this one (v2 stays 0.000 under both).
+        if clr < sim.robot_radius:
             collided = True
             break
         if np.hypot(goal[0] - sim.pose[0], goal[1] - sim.pose[1]) <= goal_cfg.goal_tol:
@@ -216,4 +222,20 @@ def default_scenarios(goal_dist=1.0):
         World([(0.40, 0.00, 0.11), (0.62, 0.00, 0.11)], (0, 0, 0), "wall_inline"),
         World([(0.55, 0.42, 0.12), (0.55, -0.42, 0.12)], (0, 0, 0), "gap_thread"),
         World([(0.40, 0.10, 0.12), (0.68, -0.24, 0.12)], (0, 0, 0), "slalom"),
+    ]
+
+
+def realistic_scenarios(goal_dist=3.0):
+    """The regime the car is actually driven in: B ~3 m ahead, obstacles 1.2-1.5 m
+    out (the default_scenarios suite is deliberately TIGHTER than the car's
+    physical turn radius supports -- see mpc/README.md). This suite is what the
+    README's realistic-regime row runs on; it is committed because that row was
+    first published from ad-hoc worlds that never made it into the repo, so the
+    number could not be reproduced. benchmark.py --suite realistic runs it.
+    """
+    return [
+        World([(1.35, 0.00, 0.14)], (0, 0, 0), "box_ahead"),
+        World([(1.20, 0.15, 0.14)], (0, 0, 0), "box_offset"),
+        World([(1.30, -0.10, 0.14), (1.30, 0.18, 0.14)], (0, 0, 0), "wall_on_line"),
+        World([(1.20, 0.20, 0.14), (1.50, -0.25, 0.14)], (0, 0, 0), "slalom_far"),
     ]

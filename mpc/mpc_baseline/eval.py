@@ -52,6 +52,26 @@ def _default_plan_dt(cfg):
     return C.TickConfig().period
 
 
+def _seed_policy(policy, seed):
+    """Give a freshly built policy its OWN rng for this episode.
+
+    build_policy's signature is fixed (GUI/CLI/third-party contract) and has no
+    seed, so every policy it returns starts at the default seed 0 -- which made
+    run_policy(seed=N) vary NOTHING undisturbed: 20 "seeds" were 20 identical
+    copies of the same 6 episodes. (The same bug was already fixed once for
+    run_variant -- see below -- and had quietly survived on this path.) Policies
+    that expose `seed()` get it called; else a `rng` attribute is replaced; a
+    policy with neither is deterministic by contract and needs no seeding.
+    """
+    if seed is None:
+        return
+    seeder = getattr(policy, "seed", None)
+    if callable(seeder):
+        seeder(seed)
+    elif hasattr(policy, "rng"):
+        policy.rng = np.random.default_rng(seed)
+
+
 def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
                 obs_cfg=None, seed=0, sense_range=3.0, plan_dt=None,
                 disturbed=False):
@@ -64,9 +84,11 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
     execution-disturbance model (DisturbanceConfig, fit from 298 on-car ticks)
     plus the runner's buffered/compensated tick loop. Screen any smoothness or
     robustness tuning against it -- the perfect-execution default mis-ranked
-    w_cont once already (looked free, went 0/2 on the car). `plan_dt` overrides the control period -- VELOCITY policies only;
-    a discrete policy runs each action for its own duration (see run_episode), so
-    plan_dt does nothing for it.
+    w_cont once already (looked free, went 0/2 on the car). `plan_dt` overrides
+    the control period. Undisturbed, a discrete policy runs each action for its
+    own duration and plan_dt does nothing for it; DISTURBED (buffered), one tick
+    of each hop is what executes -- there plan_dt IS the discrete execution step,
+    defaulting to the tick period exactly like the live runner.
     """
     # Registry keys are matched FIRST and VERBATIM, because register()/build_policy()
     # treat them verbatim. Lower-casing first (as this used to) meant a key that
@@ -87,7 +109,19 @@ def run_variant(variant, scenarios=None, live=False, goal_dist=1.0,
     obs_cfg = obs_cfg or C.ObstacleConfig()
     cfg = _cfg_for(variant, live, goal_dist)
     is_v1 = v in _V1
-    dt = plan_dt if plan_dt is not None else (cfg.mppi.dt if is_v1 else cfg.step_duration)
+    if is_v1:
+        dt = plan_dt if plan_dt is not None else cfg.mppi.dt
+    else:
+        # Disturbed = the buffered LIVE loop: one TICK of each hop executes before
+        # the next supersedes it, so the execution step must be the tick period and
+        # the policy must roll out at it too (runner.py sets rollout_dt the same
+        # way). This row used to run at step_duration=0.5 s -- a 2 Hz cadence the
+        # car never runs, with per-1/3s-tick-fitted noise injected per 0.5 s step.
+        # Undisturbed keeps the unbuffered semantics: each hop runs its own life.
+        dt = plan_dt if plan_dt is not None else (
+            C.TickConfig().period if disturbed else cfg.step_duration)
+        if disturbed:
+            cfg.rollout_dt = dt
 
     dist = C.DisturbanceConfig() if disturbed else None
     results = []
@@ -112,9 +146,10 @@ def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
     """Run ANY registered policy -- including your own model -- over the scenarios.
 
     Fresh policy + sim per scenario, constructed through registry.build_policy so
-    the action_space / build-signature checks apply here too. `magnitude` defaults
-    to 40, the value the five on-car 5 m runs used; the shipped live default is 30
-    (LiveConfig.magnitude) and below ~17.4 the car cannot steer at all, see
+    the action_space / build-signature checks apply here too, then seeded (see
+    _seed_policy -- build_policy itself cannot take a seed). `magnitude` defaults
+    to 40: the value the five on-car 5 m runs used AND the shipped live default
+    (LiveConfig.magnitude); below ~17.4 the car cannot steer at all, see
     calibration/README.md. Returns a list of EpisodeResult, so print_table / summarize
     / to_json work on it exactly like a built-in variant.
 
@@ -130,9 +165,16 @@ def run_policy(policy_key, scenarios=None, goal_dist=1.0, goal_y=0.0,
     for world in scenarios:
         policy, cfg = build_policy(policy_key, magnitude, goal_dist, goal_y=goal_y,
                                    step_duration=step_duration)
+        _seed_policy(policy, seed)
         cfg.goal.goal_dist = goal_dist
         cfg.goal.goal_y = goal_y
         dt = plan_dt if plan_dt is not None else _default_plan_dt(cfg)
+        if disturbed and getattr(policy, "action_space", None) == "discrete":
+            # Buffered loop executes one dt of each hop -- the policy must roll out
+            # at dt, not step_duration, or it predicts every hop 50% longer than
+            # what runs (the exact model error runner.py:rollout_dt exists to fix;
+            # it had quietly survived on this offline screening path).
+            cfg.rollout_dt = dt
         sim = KinematicSim(world, sense_range=sense_range,
                            robot_radius=cfg.robot.robot_radius, seed=seed,
                            disturbance=(C.DisturbanceConfig() if disturbed else None))
@@ -164,33 +206,38 @@ def _fmt(x, nd=3):
     return "  -  " if x is None else ("%.*f" % (nd, x))
 
 
-def print_table(results_by_variant):
+def print_table(results_by_variant, scenario_rows=True, aggregate=True):
     """results_by_variant: {label: [EpisodeResult]}. Prints per-scenario status
-    and an aggregate row per variant."""
+    and an aggregate row per variant. benchmark.py's multi-seed mode splits the
+    two sections: scenario rows from seed 0 only (a 120-row listing would be
+    noise), the aggregate over all seeds (a seed-0 aggregate next to it would
+    just re-print the misleading single-seed numbers)."""
     labels = list(results_by_variant)
-    scen = [r.name for r in results_by_variant[labels[0]]]
 
-    print("\nPer-scenario (R=reached, C=collided, x=failed):")
-    header = "  %-16s" % "scenario" + "".join("  %-10s" % l for l in labels)
-    print(header)
-    for i, name in enumerate(scen):
-        row = "  %-16s" % name
-        for l in labels:
-            r = results_by_variant[l][i]
-            tag = "C-hit" if r.collided else ("R %4.1fs" % r.sim_time if r.reached else "x-fail")
-            row += "  %-10s" % tag
-        print(row)
+    if scenario_rows:
+        scen = [r.name for r in results_by_variant[labels[0]]]
+        print("\nPer-scenario (R=reached, C=collided, x=failed):")
+        header = "  %-16s" % "scenario" + "".join("  %-10s" % l for l in labels)
+        print(header)
+        for i, name in enumerate(scen):
+            row = "  %-16s" % name
+            for l in labels:
+                r = results_by_variant[l][i]
+                tag = "C-hit" if r.collided else ("R %4.1fs" % r.sim_time if r.reached else "x-fail")
+                row += "  %-10s" % tag
+            print(row)
 
-    print("\nAggregate:")
-    keys = ["success_rate", "collision_rate", "mean_time_s", "mean_path_len",
-            "mean_min_clearance", "mean_effort"]
-    print("  %-20s" % "metric" + "".join("  %-10s" % l for l in labels))
     summ = {l: summarize(results_by_variant[l]) for l in labels}
-    for k in keys:
-        row = "  %-20s" % k
-        for l in labels:
-            row += "  %-10s" % _fmt(summ[l][k])
-        print(row)
+    if aggregate:
+        print("\nAggregate:")
+        keys = ["success_rate", "collision_rate", "mean_time_s", "mean_path_len",
+                "mean_min_clearance", "mean_effort"]
+        print("  %-20s" % "metric" + "".join("  %-10s" % l for l in labels))
+        for k in keys:
+            row = "  %-20s" % k
+            for l in labels:
+                row += "  %-10s" % _fmt(summ[l][k])
+            print(row)
     return summ
 
 
