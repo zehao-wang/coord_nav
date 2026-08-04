@@ -45,9 +45,10 @@ python scripts/benchmark.py --json /tmp/bench.json                            # 
 > 把 `steer_arm` 改回标定前的虚构值 0.10 现在只降到 0.950,已不复现旧的 0.750(那是 0.9.4 软墙修复前的数字)。
 > 在实际驱动的场景里标定后是 1.000 / 0 碰撞。
 >
-> ⚠️ 仿真的"真值"仍然是 planner 自己用的积分器（`rollout_body`），**无噪声、无延迟**
-> （`KinematicSim` 的 `noise_xy` / `dropout` 参数 `eval.run_variant` 从不设置）。
-> 控制周期已经和实车统一（都是一个 tick），但这里的数字仍只说明"规划逻辑自洽 + 模型已标定"。
+> ⚠️ **默认**（不带 `--disturbed`）仍是完美执行的世界:planner 的积分器就是"真值",
+> 无执行噪声、无缓冲延迟 —— 这些数字只说明"规划逻辑自洽 + 模型已标定"。
+> 要评估稳健性,**用 `--disturbed`**(见上)。感知噪声(`noise_xy`/`dropout`)目前
+> 两种模式都未启用,是扰动模型的已知余项。
 
 ### GUI（推荐，实车）
 ```bash
