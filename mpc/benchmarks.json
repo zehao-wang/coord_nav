@@ -89,7 +89,7 @@
      "success": 0.99
     }
    },
-   "commit": "250d5bc",
+   "commit": "1ca4242",
    "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
@@ -161,10 +161,10 @@
      "collision": 0.03,
      "episodes": 200,
      "mean_min_clearance": 0.453,
-     "mean_time_s": 10.54,
-     "mean_turn_deg": 6.0,
-     "success": 0.91,
-     "tail_wander_m": 0.101
+     "mean_time_s": 10.55,
+     "mean_turn_deg": 5.9,
+     "success": 0.915,
+     "tail_wander_m": 0.103
     },
     "L4_dyn_complex": {
      "collision": 0.185,
@@ -179,11 +179,11 @@
      "collision": 0.2067,
      "episodes": 600,
      "mean_min_clearance": 0.302,
-     "mean_time_s": 10.41,
-     "success": 0.7433
+     "mean_time_s": 10.42,
+     "success": 0.745
     }
    },
-   "commit": "250d5bc",
+   "commit": "1ca4242",
    "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
