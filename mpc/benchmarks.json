@@ -59,8 +59,8 @@
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.291,
-     "mean_time_s": 4.19,
+     "mean_min_clearance": 0.277,
+     "mean_time_s": 4.2,
      "success": 1.0
     },
     "L3_dyn_single": {
@@ -68,29 +68,29 @@
      "episodes": 200,
      "mean_min_clearance": 0.523,
      "mean_time_s": 8.73,
-     "mean_turn_deg": 19.7,
+     "mean_turn_deg": 19.8,
      "success": 1.0,
      "tail_wander_m": 0.16
     },
     "L4_dyn_complex": {
-     "collision": 0.0,
+     "collision": 0.03,
      "episodes": 200,
-     "mean_min_clearance": 0.312,
-     "mean_time_s": 9.37,
-     "mean_turn_deg": 23.1,
-     "success": 1.0,
-     "tail_wander_m": 0.158
+     "mean_min_clearance": 0.297,
+     "mean_time_s": 9.49,
+     "mean_turn_deg": 25.2,
+     "success": 0.97,
+     "tail_wander_m": 0.163
     },
     "overall": {
-     "collision": 0.0,
+     "collision": 0.01,
      "episodes": 600,
-     "mean_min_clearance": 0.378,
-     "mean_time_s": 8.04,
-     "success": 1.0
+     "mean_min_clearance": 0.37,
+     "mean_time_s": 8.07,
+     "success": 0.99
     }
    },
-   "commit": "efbd2b5",
-   "date": "2026-08-04",
+   "commit": "922898a",
+   "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
   },
@@ -153,38 +153,38 @@
     "L2_static_tight": {
      "collision": 0.6,
      "episodes": 120,
-     "mean_min_clearance": 0.126,
+     "mean_min_clearance": 0.128,
      "mean_time_s": 4.76,
      "success": 0.35
     },
     "L3_dyn_single": {
-     "collision": 0.04,
+     "collision": 0.03,
      "episodes": 200,
-     "mean_min_clearance": 0.452,
-     "mean_time_s": 10.68,
-     "mean_turn_deg": 5.9,
-     "success": 0.905,
-     "tail_wander_m": 0.102
+     "mean_min_clearance": 0.453,
+     "mean_time_s": 10.54,
+     "mean_turn_deg": 6.0,
+     "success": 0.91,
+     "tail_wander_m": 0.101
     },
     "L4_dyn_complex": {
-     "collision": 0.11,
+     "collision": 0.185,
      "episodes": 200,
-     "mean_min_clearance": 0.28,
-     "mean_time_s": 11.31,
-     "mean_turn_deg": 6.8,
-     "success": 0.855,
-     "tail_wander_m": 0.132
+     "mean_min_clearance": 0.249,
+     "mean_time_s": 11.44,
+     "mean_turn_deg": 6.9,
+     "success": 0.765,
+     "tail_wander_m": 0.142
     },
     "overall": {
-     "collision": 0.185,
+     "collision": 0.2067,
      "episodes": 600,
-     "mean_min_clearance": 0.311,
-     "mean_time_s": 10.45,
-     "success": 0.77
+     "mean_min_clearance": 0.301,
+     "mean_time_s": 10.41,
+     "success": 0.7417
     }
    },
-   "commit": "efbd2b5",
-   "date": "2026-08-04",
+   "commit": "922898a",
+   "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
   }

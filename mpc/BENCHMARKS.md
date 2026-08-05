@@ -18,8 +18,8 @@ Difficulty tiers (graded by construction, fixed generator seeds):
 | policy | L1 | L2 | L3 | L4 | overall | L3+L4 turn(deg) | L3+L4 tail(m) | commit | date |
 |---|---|---|---|---|---|---|---|---|---|
 | `mpc_grid` | 1.000 / 0.000 | 1.000 / 0.000 | 0.820 / 0.180 | 0.865 / 0.135 | 0.895 / 0.105 | 20.8 | 0.191 | efbd2b5 | 2026-08-04 |
-| `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 21.4 | 0.159 | efbd2b5 | 2026-08-04 |
+| `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 0.970 / 0.030 | 0.990 / 0.010 | 22.5 | 0.162 | 922898a | 2026-08-05 |
 | `mpc_vw` | 0.850 / 0.113 | 0.350 / 0.600 | 0.725 / 0.270 | 0.485 / 0.450 | 0.587 / 0.375 | 6.3 | 0.157 | efbd2b5 | 2026-08-04 |
-| `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.905 / 0.040 | 0.855 / 0.110 | 0.770 / 0.185 | 6.3 | 0.117 | efbd2b5 | 2026-08-04 |
+| `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.910 / 0.030 | 0.765 / 0.185 | 0.742 / 0.207 | 6.5 | 0.121 | 922898a | 2026-08-05 |
 
 `turn` = mean direction change between trajectory steps (smoothness, dynamic tiers); `tail` = mean |cross-track| over each episode's last third (return-to-line, dynamic tiers).

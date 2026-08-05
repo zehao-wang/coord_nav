@@ -3,6 +3,47 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.20 - 2026-08-05 - perception hardening: the _t tracker now survives REAL sensor data
+
+The gap: replaying 220 recorded on-car ticks (all-static scenes, the 0.9.14
+sessions) through the tracker showed the sim-tuned gates leaking PHANTOM
+velocities on 95% of ticks -- p50 0.107 / p90 0.245 / max 0.572 m/s within
+1.5 m, overlapping pedestrian speeds. Root causes measured, not guessed: wall
+clusters arrive as chains whose centroids SLIDE as the viewpoint moves, and
+adjacent clusters cross-associate (churn). NOT timestamp skew (a zero-yaw run
+was equally affected). Deploying *_t like that would have meant dodging ghost
+walls. Method: an offline harness (real frames = labeled negatives; movers
+injected into the SAME frames with MEASURED noise -- centre sigma 0.02 m,
+radius 0.01 m, 28% dropout, fitted from calm tracks -- as labeled positives),
+feature-separation analysis, then gate selection by grid search.
+
+- **Four mechanism-targeted gates** in ObstacleField._vel (config knobs with
+  the tuning data cited): COHERENCE >= 0.90 (|sum of raw velocity samples| /
+  sum|samples|, decayed -- churn flips direction, movers do not), ISOLATION
+  >= 0.35 m (walls come in chains; a mover crosses open floor), NET
+  DISPLACEMENT >= 0.15 m within a [0.75, 1.5] s ping-pong-anchored window
+  (slide wanders; a mover goes somewhere), sightings 3 -> 5. Plus a young-track
+  association boost (+0.07 m for <3 sightings): a 0.45 m/s mover's first
+  re-sighting lands beyond merge_dist and used to fragment forever.
+- **Result on the recordings** (REAL class end-to-end): phantom events 2685 ->
+  80 (-97%), and the two clean A/B runs read 1 and 0; injected movers at
+  0.25/0.35/0.45 m/s acquire 67-80% of episodes in ~2-3.7 s median. Honest
+  residue: the recordings had the OPERATOR in the room -- walking-speed
+  residuals in the later sessions may be true movers; a controlled no-human
+  recording is part of the live session.
+- **Committed evidence**: tests/data/real_frames.json (56 real ticks from the
+  0.9.14 A/B runs) + tests asserting <=1 phantom event on them forever and
+  injected-mover acquisition <= 4 s; scripts/tracker_eval.py re-runs the whole
+  harness (fixture by default, --logs for full recordings) whenever the
+  tracker changes. Measured noise knobs recorded in the script constants for
+  the eventual TestField perception fit (protocol still runs noise at 0).
+- Benchmark rows for mpc_grid_t / mpc_vw_t refreshed (the gates buy real-world
+  safety with ~1.7 s acquisition latency in sim too -- see BENCHMARKS.md for
+  the updated cells; plain rows untouched, gates only affect velocities()).
+- Cost: none for the frozen-world variants (association boost aside, gates act
+  only on the gated velocity output), none for static worlds (velocity reads
+  0 exactly -- byte-equivalence tests still pass). 31 tests.
+
 ## 0.9.19 - 2026-08-04 - the fixed benchmark: one eval protocol, one tiered set, one committed table
 
 `BENCHMARKS.md` + `benchmarks.json` + `scripts/benchmark_table.py` +

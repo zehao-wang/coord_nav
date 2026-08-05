@@ -265,9 +265,28 @@ class ObstacleConfig:
     # vel_deadband.
     vel_ema: float = 0.5              # EMA weight on each new raw velocity sample
     vel_cap: float = 1.0              # m/s clamp: a bad association can't invent a sprinter
-    vel_min_sightings: int = 3        # frames a track must be seen before its v counts
-    vel_deadband: float = 0.04        # m/s below which a track is "static" (perception
-                                      # jitter on a real box measures well under this)
+    vel_min_sightings: int = 5        # frames a track must be seen before its v counts
+                                      # (was 3; raised by the real-frame screening below)
+    vel_deadband: float = 0.04        # m/s below which a track is "static"
+    # --- REAL-PERCEPTION gates (2026-08-05, tuned on 220 recorded on-car ticks
+    # + noise-matched injected movers; see scripts/tracker_eval.py). The
+    # original sightings+deadband gates leaked phantom velocities on 95% of
+    # real ticks (wall-cluster centroid slide + association churn, phantom p90
+    # 0.245 m/s -- overlapping pedestrian speed, a deadband cannot separate).
+    # These target the mechanisms and cut phantom events 97.7% while still
+    # acquiring 0.25-0.35 m/s movers in ~2 s:
+    vel_coherence: float = 0.90       # |sum(raw samples)|/sum|samples| (decayed):
+                                      # churn flips direction, a mover doesn't
+    vel_coher_decay: float = 0.7      # per-sighting decay of those sums
+    vel_isolation: float = 0.35       # m to the nearest other track: walls come in
+                                      # CHAINS of clusters, a mover crosses open floor
+    vel_min_disp: float = 0.15        # m net displacement of raw obs within the window:
+                                      # slide wanders, a mover goes somewhere
+    vel_disp_window: float = 1.5      # s (ping-pong anchors -> effective window
+                                      # [0.75, 1.5] s)
+    assoc_young_boost: float = 0.07   # extra match radius (m) for tracks with <3
+                                      # sightings: a 0.45 m/s mover's first re-sighting
+                                      # lands beyond merge_dist and fragmented forever
     pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
                                       # beyond ~2.5 s a constant-velocity guess is fiction
                                       # (bounces, stops), so the prediction holds there.
