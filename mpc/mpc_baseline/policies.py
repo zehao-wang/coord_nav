@@ -159,39 +159,46 @@ class Variant2Policy(Policy):
         self._dirs[nz, 1] = self.table[nz, 1] / norms[nz]
         self._prev_dir = None                             # direction the car is executing
 
-    def _candidates(self):
+    def _candidates(self, nominal):
         H = self.cfg.horizon
         if self.n ** H <= self.cfg.exhaustive_cap:
             return enumerate_action_sequences(self.n, H)
         return sample_action_sequences(self.n, H, self.cfg.samples, self.rng,
-                                       self._nominal)
+                                       nominal)
 
     def plan(self, obs):
         pose = np.asarray(obs.pose, dtype=float)
         goal = np.asarray(obs.goal, dtype=float)[:2]
-        seqs = self._candidates()                         # (K, H) action indices
-        body = self.table[seqs]                           # (K, H, 3) body velocities
         # Roll out at the EXECUTION step, not the hop's life: the runner dispatches a
         # hop and the next tick supersedes it, so only one tick of each hop actually
         # happens. Rolling out at step_duration=0.5 against a 0.333 s tick predicted
         # every hop 50% longer than the car performs.
         dt = getattr(self.cfg, "rollout_dt", None) or self.cfg.step_duration
-        states = rollout_body(pose, body, dt)
-
-        cost, _collided = total_cost_discrete(
-            states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt,
-            predict=getattr(self.cfg, "predict_obstacles", False),
-            pred_delay=getattr(self.cfg, "pred_extra_delay_s", 0.0),
-            dirs=self._dirs[seqs], prev_dir=self._prev_dir)
-
-        best = int(np.argmin(cost))
-        best_seq = seqs[best]
+        # sample -> argmin -> resample around the winner (same refine loop as
+        # variant 1); the first pass is warm-started by last cycle's plan
+        nominal = self._nominal
+        best_seq, best_cost = None, None
+        for _ in range(max(1, getattr(self.cfg, "n_iters", 1))):
+            seqs = self._candidates(nominal)              # (K, H) action indices
+            body = self.table[seqs]                       # (K, H, 3) body velocities
+            states = rollout_body(pose, body, dt)
+            cost, _collided = total_cost_discrete(
+                states, goal, obs.field, self.cfg.robot, self.cfg.cost, dt,
+                predict=getattr(self.cfg, "predict_obstacles", False),
+                pred_delay=getattr(self.cfg, "pred_extra_delay_s", 0.0),
+                dirs=self._dirs[seqs], prev_dir=self._prev_dir)
+            b = int(np.argmin(cost))
+            if best_cost is None or cost[b] < best_cost:
+                best_cost = float(cost[b])
+                best_seq = seqs[b]
+                best_states = states[b]
+            nominal = best_seq
         self._prev_dir = self._dirs[best_seq[0]].copy()   # what the car runs next tick
         # warm start next cycle: time-shift, repeat the last action
         self._nominal = np.concatenate([best_seq[1:], best_seq[-1:]])
         mag, dur = self.cfg.step_magnitude, self.cfg.step_duration
         horizon = [(int(self.ids[i]), mag, dur) for i in best_seq]   # full hop plan
-        return Action.discrete(horizon[0][0], mag, dur, traj=states[best],
+        return Action.discrete(horizon[0][0], mag, dur, traj=best_states,
                                controls=horizon)
 
     def reset(self):

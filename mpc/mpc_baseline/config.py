@@ -217,9 +217,19 @@ class Variant2Config:
                                       # tick period, because ONE tick of the hop is what
                                       # actually gets executed before the next one replaces it.
                                       # None = fall back to step_duration (offline default).
-    horizon: int = 4                  # hops looked ahead
-    samples: int = 1024               # sampled action sequences (if not exhaustive)
-    exhaustive_cap: int = 20000       # enumerate all seqs when |A|^H <= this
+    horizon: int = 12                 # hops looked ahead ~= 1.2-1.6 m at magnitude 35-40.
+                                      # Was 4 EXHAUSTIVE hops (~0.4-0.5 m): the 2026-08-05
+                                      # live dense course showed that horizon committing to
+                                      # the wrong side of obstacle 1 (the dead-end lay
+                                      # beyond it) and dithering at a navigable narrow
+                                      # passage whose payoff it could not see. Exhaustive
+                                      # enumeration is what capped the horizon -- v2 is now
+                                      # a warm-started SAMPLING MPC like v1 (run-structured
+                                      # candidates + nominal mutations + refine passes).
+    samples: int = 2048               # sampled action sequences per refine pass
+    n_iters: int = 2                  # sample -> argmin -> resample refine passes
+    exhaustive_cap: int = 20000       # enumerate all seqs when |A|^H <= this (only very
+                                      # short custom horizons; the default samples)
     predict_obstacles: bool = False   # True = the TIME-AWARE variant (mpc_grid_t);
                                       # see Variant1Config.predict_obstacles
     pred_extra_delay_s: float = 0.0   # dispatch buffering, see Variant1Config
@@ -261,7 +271,10 @@ class DisturbanceConfig:
 @dataclass
 class ObstacleConfig:
     mem_time_s: float = 1.5           # keep obstacles seen this recently (0 = current frame only)
-    mem_radius: float = 3.0           # drop remembered obstacles farther than this from the car
+    mem_radius: float = 4.5           # drop remembered obstacles farther than this from the
+                                      # car (was 3.0 when every circle cost compute; the
+                                      # query-box culling made far context free, and more
+                                      # information is strictly better for avoidance)
     merge_dist: float = 0.15          # fuse remembered circles closer than this (m)
     max_age_stale: float = 1.0        # ignore an /obstacles frame older than this (s)
     # Constant-velocity tracking (used by the *_t time-aware policies; pure

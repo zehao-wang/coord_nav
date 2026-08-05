@@ -78,7 +78,7 @@ class PerceptionConfig:
     noise magnitudes are honest KNOBS, not measurements -- they default to 0
     until fitted from recorded run.json frames (policy_run records the real
     circles every tick, so the fit is possible; not done yet)."""
-    sense_range: float = 3.0
+    sense_range: float = 6.0   # match the real lidar (range_max=0 -> full scan range)
     occlusion: bool = True
     noise_xy: float = 0.0             # gaussian std on sensed centres (m), UNFITTED
     dropout: float = 0.0              # per-obstacle miss probability, UNFITTED

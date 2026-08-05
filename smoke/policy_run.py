@@ -87,6 +87,12 @@ def run(args):
         return None
     policy, cfg = build_policy(key, args.mag, args.bx, goal_y=args.by)
     cfg.goal.goal_tol = args.tol
+    if args.extra_margin is not None:
+        # experiment knob: widen the planner's obstacle inflation beyond the
+        # benchmarked default (0.10). The 2026-08-05 A/B guard-stopped v2 at a
+        # dead-centre box: it skims the inflated boundary by design, and one
+        # diagonal hop of execution error (~0.1 m) can cross the guard line.
+        cfg.cost.extra_margin = args.extra_margin
     cfg.goal.timeout_s = args.timeout
     live = C.LiveConfig()
     live.magnitude = args.mag
@@ -222,6 +228,9 @@ def main():
     ap.add_argument("--pose", default="odom", choices=["odom", "lidar", "dead_reckon"])
     ap.add_argument("--mag", type=float, default=40.0)
     ap.add_argument("--tol", type=float, default=0.15)
+    ap.add_argument("--extra-margin", type=float, default=None,
+                    help="override CostConfig.extra_margin (benchmarked default "
+                         "0.10; the planner keeps this much extra clearance)")
     ap.add_argument("--timeout", type=float, default=35.0)
     ap.add_argument("--tick-hz", type=float, default=3.0,
                     help="GLOBAL tick rate; must equal the car's perception rate")

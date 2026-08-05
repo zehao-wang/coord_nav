@@ -28,7 +28,7 @@ EpisodeResult = namedtuple("EpisodeResult", [
 
 
 class KinematicSim(object):
-    def __init__(self, world, sense_range=3.0, robot_radius=0.13,
+    def __init__(self, world, sense_range=6.0, robot_radius=0.13,
                  noise_xy=0.0, dropout=0.0, seed=0, disturbance=None):
         self.world = world
         # DisturbanceConfig or None. With it, step() executes commands the way the

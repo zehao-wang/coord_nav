@@ -3,6 +3,51 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.22 - 2026-08-05 - LIVE SESSION: v2 goes long-horizon sampled, the radius ratchet, and the dynamic A/B lands
+
+A full on-car day. Every failure yielded a committed root cause; the session
+ended with the designed result: a person crossing at ~0.3 m/s makes frozen
+mpc_grid wander 7.54 m into a timeout while mpc_grid_t tracks them live
+(23/41 ticks, 0.13-0.28 m/s estimates) and reaches B in 13.89 s / 3.97 m.
+Recorded run.jsons render to top-down videos via NEW smoke/render_run.py
+(tracker arrows + prediction ghosts included).
+
+The chase, in order:
+- **Deployed perception validated live**: 0 phantom velocity events in a 60 s
+  no-human capture and a 47-frame operator-present capture (after adding the
+  vel_trust_range=2.2 m gate: ALL residual phantoms sat at 2.2-3.0 m where
+  far-lidar centroids jitter; bookkeeping continues at range so an entering
+  mover is usable immediately).
+- **Static A/B passed** (after course surgery): grid 9.93 s and 12.29 s,
+  grid_t 11.94 s, threading a 0.35 m channel; a 26-tick live run showed mean
+  3.8 cm trajectory deviation between the variants -- static byte-equivalence
+  holds on the real car.
+- **v2 rebuilt as a long-horizon warm-started SAMPLING MPC** (user call: "why
+  exhaustive? aren't we MPC?"). Horizon 4 exhaustive -> 12 sampled
+  (run-structured candidates -- the discrete analogue of v1's AR(1) noise --
+  plus nominal mutations, 2048 samples x 2 refine passes). 10 ms solves (the
+  h5-exhaustive attempt cost 270 ms) thanks to exact query-box culling in
+  ObstacleField; offline tight-default jumped 0.833 -> 1.000 (wall_inline's
+  beyond-horizon dead-end cured). mem_radius 3->4.5, sim sense_range 3->6
+  (real-lidar parity; culling made far context free).
+- **The RADIUS RATCHET** (live-only, invisible offline): field memory kept
+  max(old, new) radius per track; live radii jitter, so a continuously-seen
+  obstacle ratchets ~ +0.1 m over 100 ticks. Two ratcheted boxes shrank a
+  0.35 m passable channel to ~0.15 m in memory and the car dithered at a gap
+  it could physically thread -- twice, until the mechanism was found. Radius
+  is now EMA'd like position. Next run threaded the channel and reached.
+- Live wisdom logged: the ch341 serial wedge correlates with SUSTAINED
+  DIAGONAL drive (max current; two wedges, both mid-diagonal; magnitude 35 +
+  cable reseat = no recurrence); the wedge estop worked both times. v2 skims
+  its inflated boundary by design and one hop of execution error can cross
+  the contact guard -- margin is the razor (extra_margin 0.15 closed the
+  room's corridors instead; policy_run grew an --extra-margin flag).
+  Square boxes protrude past fitted circles: one graze at predicted 0.142 m
+  clearance. Real rooms have WALL POCKETS and CLUTTERED GOALS the offline
+  suites never model -- goal-blocked detection and walled scenarios are now
+  protocol-v3 backlog.
+- PROTOCOL_VERSION -> 2 (sense_range + the new v2); full 4-row table rebuilt.
+
 ## 0.9.21 - 2026-08-05 - hardening review round: split-cluster phantom, extraction fixes at the source, live tracker overlay
 
 Adversarial review of the 0.9.19/0.9.20 layers (12 agents, 9 confirmed, 0

@@ -49,7 +49,9 @@ from .eval import run_policy, summarize
 from .registry import POLICY_REGISTRY
 from .sim import default_scenarios, realistic_scenarios
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2   # v2: sense_range 6.0 (real-lidar parity), variant 2
+                       # rebuilt as a long-horizon sampled MPC (2026-08-05
+                       # live session) -- same set, new same-seed numbers
 SEEDS = 20
 MAGNITUDE = 40.0
 L3_RANDOM = (6, 1003)                 # (count, generator seed)

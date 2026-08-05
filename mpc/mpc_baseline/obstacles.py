@@ -215,10 +215,17 @@ class ObstacleField(object):
             m[j, SVY] = dcy * m[j, SVY] + rvy
             m[j, SMAG] = dcy * m[j, SMAG] + np.hypot(rvx, rvy)
         # EMA on position so a moving obstacle isn't frozen at its first-seen
-        # spot; keep the larger radius (conservative); refresh bookkeeping
+        # spot, and EMA on RADIUS too. Radius used to be max(old, new)
+        # ("conservative") -- but live radii jitter (p90 ~0.036 m), so a
+        # continuously-seen track RATCHETS to the max of every draw (~ +0.1 m
+        # after 100 ticks). Two ratcheted obstacles shrank a 0.35 m passable
+        # channel to ~0.15 m in the planner's memory and the car dithered at
+        # the entrance of a gap it could physically thread. The perception
+        # node's temporalFilter already EMAs the radius once; a max here was
+        # double conservatism that only ever grew.
         m[j, X] = 0.5 * m[j, X] + 0.5 * row[0]
         m[j, Y] = 0.5 * m[j, Y] + 0.5 * row[1]
-        m[j, R] = max(m[j, R], row[2])
+        m[j, R] = 0.5 * m[j, R] + 0.5 * row[2]
         m[j, T] = now
         m[j, N] += 1
         m[j, OX] = row[0]
@@ -281,6 +288,17 @@ class ObstacleField(object):
         states_xy = np.asarray(states_xy, dtype=float)
         K, H = states_xy.shape[0], states_xy.shape[1]
         pred = self.predict(dts)                             # (H, N, 3)
+        if pred.shape[1]:
+            # cull circles far from the rollout envelope (exact, see _cull) --
+            # a track is kept if ANY of its predicted positions is near the box
+            pts = states_xy.reshape(-1, 2)
+            lo = pts.min(axis=0) - self._CULL_SLACK
+            hi = pts.max(axis=0) + self._CULL_SLACK
+            r_all = pred[:, :, 2] + robot_radius + extra_margin        # (H, N)
+            near = ((pred[:, :, 0] + r_all >= lo[0]) & (pred[:, :, 0] - r_all <= hi[0]) &
+                    (pred[:, :, 1] + r_all >= lo[1]) & (pred[:, :, 1] - r_all <= hi[1]))
+            keep = near.any(axis=0)                                    # (N,)
+            pred = pred[:, keep, :]
         if pred.shape[1] == 0:
             return np.full((K, H), np.inf)
         dx = states_xy[:, :, 0, None] - pred[None, :, :, 0]  # (K, H, N)
@@ -297,12 +315,28 @@ class ObstacleField(object):
             return np.zeros((0, 2)), np.zeros((0,))
         return c[:, :2], c[:, 2] + robot_radius + extra_margin
 
+    # Circles farther than this from the query bounding box cannot contribute a
+    # clearance below it (soft cost is zero beyond inflation + obs_buffer), so
+    # culling them is EXACT for every cost/collision decision downstream --
+    # only the (unused) magnitude of large clearances changes. 0.8 m covers
+    # inflation (~0.45) + obs_buffer (0.15) + headroom.
+    _CULL_SLACK = 0.8
+
+    def _cull(self, pts, centres, radii):
+        lo = pts.min(axis=0) - self._CULL_SLACK
+        hi = pts.max(axis=0) + self._CULL_SLACK
+        keep = ((centres[:, 0] + radii >= lo[0]) & (centres[:, 0] - radii <= hi[0]) &
+                (centres[:, 1] + radii >= lo[1]) & (centres[:, 1] - radii <= hi[1]))
+        return centres[keep], radii[keep]
+
     def clearance(self, points, robot_radius, extra_margin):
         """Signed clearance (m) of each query point (M,2) to the nearest inflated
-        circle edge: positive = outside, negative = inside. +inf if no obstacles.
-        Returns (M,)."""
+        circle edge: positive = outside, negative = inside. +inf if no obstacles
+        (or none anywhere near the query box -- see _cull). Returns (M,)."""
         pts = np.asarray(points, dtype=float).reshape(-1, 2)
         centres, radii = self._inflated(robot_radius, extra_margin)
+        if len(centres):
+            centres, radii = self._cull(pts, centres, radii)
         if len(centres) == 0:
             return np.full(len(pts), np.inf)
         # (M, N) distances point->centre minus inflated radius
