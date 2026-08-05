@@ -52,157 +52,16 @@
 #include <algorithm>
 #include <numeric>
 
-namespace {
+// The pure extraction logic lives in clustering.h (ROS-free) so the exact code
+// the car runs is unit-tested on the workstation: tests/test_clustering.cpp.
+#include "clustering.h"
 
-struct Pt { float x, y; };
-struct Circle { float x, y, r; };
-
-// ---- DBSCAN, matching perception_server.dbscan -------------------------
-// Brute-force O(n^2) neighbour search: for a few hundred lidar points this is
-// well under a millisecond and needs no KD-tree dependency. Border points get
-// a label but do not expand their cluster (identical to the Python version).
-std::vector<int> dbscan(const std::vector<Pt>& p, float eps, int min_samples) {
-  const int n = static_cast<int>(p.size());
-  std::vector<int> labels(n, -1);
-  if (n == 0) return labels;
-
-  const float eps2 = eps * eps;
-  std::vector<std::vector<int>> nbr(n);
-  for (int i = 0; i < n; ++i) {
-    nbr[i].push_back(i);  // include self, as the Python neighbour count does
-    for (int j = i + 1; j < n; ++j) {
-      const float dx = p[i].x - p[j].x, dy = p[i].y - p[j].y;
-      if (dx * dx + dy * dy <= eps2) {
-        nbr[i].push_back(j);
-        nbr[j].push_back(i);
-      }
-    }
-  }
-
-  std::vector<char> core(n), visited(n, 0);
-  for (int i = 0; i < n; ++i)
-    core[i] = static_cast<int>(nbr[i].size()) >= min_samples;
-
-  int cid = -1;
-  std::vector<int> stack;
-  for (int i = 0; i < n; ++i) {
-    if (visited[i] || !core[i]) continue;
-    ++cid;
-    stack.clear();
-    stack.push_back(i);
-    visited[i] = 1;
-    labels[i] = cid;
-    while (!stack.empty()) {
-      const int q = stack.back();
-      stack.pop_back();
-      if (!core[q]) continue;              // border points do not expand
-      for (int k : nbr[q]) {
-        if (!visited[k]) {
-          visited[k] = 1;
-          labels[k] = cid;
-          stack.push_back(k);
-        } else if (labels[k] == -1) {
-          labels[k] = cid;                 // reclaim a point marked noise
-        }
-      }
-    }
-  }
-  return labels;
-}
-
-// Centroid + farthest-point radius (perception_server.enclosing_circle).
-Circle enclosing_circle(const std::vector<Pt>& pts) {
-  Circle c{0, 0, 0};
-  const int n = static_cast<int>(pts.size());
-  if (n == 0) return c;
-  double sx = 0, sy = 0;
-  for (const Pt& q : pts) { sx += q.x; sy += q.y; }
-  c.x = static_cast<float>(sx / n);
-  c.y = static_cast<float>(sy / n);
-  float r2 = 0;
-  for (const Pt& q : pts) {
-    const float dx = q.x - c.x, dy = q.y - c.y;
-    r2 = std::max(r2, dx * dx + dy * dy);
-  }
-  c.r = (n > 1) ? std::sqrt(r2) : 0.0f;
-  return c;
-}
-
-// perception_server.wrap_cluster: one circle, or split a long cluster into
-// chunks each within (max_radius - margin) reach of the chunk start. Point
-// order (scan order within the cluster) is preserved, as in Python.
-void wrap_cluster(const std::vector<Pt>& pts, float margin, float max_radius,
-                  std::vector<Circle>& out) {
-  Circle c = enclosing_circle(pts);
-  if (c.r + margin <= max_radius) {
-    c.r += margin;
-    out.push_back(c);
-    return;
-  }
-  const float reach = std::max(max_radius - margin, 1e-3f);
-  const int n = static_cast<int>(pts.size());
-  int i = 0;
-  while (i < n) {
-    int j = i + 1;
-    while (j < n) {
-      const float dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y;
-      if (std::sqrt(dx * dx + dy * dy) > reach) break;
-      ++j;
-    }
-    std::vector<Pt> chunk(pts.begin() + i, pts.begin() + j);
-    Circle cc = enclosing_circle(chunk);
-    cc.r += margin;
-    out.push_back(cc);
-    i = j;
-  }
-}
-
-// perception_server.drop_redundant: greedily remove circles (smallest radius
-// first) whose covered points stay covered by the remaining kept circles.
-std::vector<Circle> drop_redundant(const std::vector<Circle>& circles,
-                                   const std::vector<Pt>& points) {
-  const int m = static_cast<int>(circles.size());
-  if (m < 2 || points.empty()) return circles;
-  const int np = static_cast<int>(points.size());
-
-  // covers[i][p] : circle i covers point p
-  std::vector<std::vector<char>> covers(m, std::vector<char>(np, 0));
-  for (int i = 0; i < m; ++i) {
-    const float rr = circles[i].r + 1e-9f;
-    const float r2 = rr * rr;
-    for (int p = 0; p < np; ++p) {
-      const float dx = points[p].x - circles[i].x, dy = points[p].y - circles[i].y;
-      covers[i][p] = (dx * dx + dy * dy) <= r2;
-    }
-  }
-
-  std::vector<int> order(m);
-  std::iota(order.begin(), order.end(), 0);
-  std::sort(order.begin(), order.end(),
-            [&](int a, int b) { return circles[a].r < circles[b].r; });
-
-  std::vector<char> keep(m, 1);
-  for (int idx : order) {
-    keep[idx] = 0;                          // tentatively drop
-    bool redundant = true;
-    for (int p = 0; p < np && redundant; ++p) {
-      if (!covers[idx][p]) continue;        // only points this circle covers
-      bool covered = false;
-      for (int k = 0; k < m; ++k) {
-        if (keep[k] && covers[k][p]) { covered = true; break; }
-      }
-      if (!covered) redundant = false;      // dropping idx would uncover p
-    }
-    if (!redundant) keep[idx] = 1;          // put it back
-  }
-
-  std::vector<Circle> out;
-  for (int i = 0; i < m; ++i)
-    if (keep[i]) out.push_back(circles[i]);
-  return out;
-}
-
-}  // namespace
+using obstacle_clustering::Pt;
+using obstacle_clustering::Circle;
+using obstacle_clustering::dbscan;
+using obstacle_clustering::wrap_cluster;
+using obstacle_clustering::merge_circles;
+using obstacle_clustering::drop_redundant;
 
 class ObstacleCirclesNode {
  public:
@@ -219,6 +78,17 @@ class ObstacleCirclesNode {
     // ->1 = very smooth/slow); filter_assoc = max match distance between frames (m).
     pnh.param("filter_alpha", filter_alpha_, 0.5);
     pnh.param("filter_assoc", filter_assoc_, 0.4);
+    // filter_hold: frames an unmatched previous circle persists (ego-motion
+    // coasted) before it is dropped. The clustering flickers -- replaying real
+    // recordings measured a 28% per-tick missed-update rate on near obstacles
+    // -- and every flicker used to delete the circle for a frame.
+    pnh.param("filter_hold", filter_hold_, 2);
+    // kasa_rms: residual gate (m) for the Kasa arc fit that replaces the
+    // centroid circle on compact clusters (stable centre under approach).
+    // grid_cell: odom-anchored wall-chunk grid size (m) -- boundaries fixed in
+    // the world instead of sliding with the viewpoint.
+    pnh.param("kasa_rms", kasa_rms_, 0.02);
+    pnh.param("grid_cell", grid_cell_, 0.35);
     pnh.param("lidar_yaw", lidar_yaw_, M_PI);
     pnh.param("lidar_x", lidar_x_, 0.0);
     pnh.param("lidar_y", lidar_y_, 0.0);
@@ -289,18 +159,28 @@ class ObstacleCirclesNode {
   // filter_assoc, and EMA the residual (position+radius) -- so a persisting circle
   // stops jittering as the clustered point set changes, WITHOUT lagging the car's
   // own motion. Unmatched fresh circles pass through immediately (a new/moved
-  // obstacle is never delayed); unmatched previous ones are dropped.
+  // obstacle is never delayed); unmatched PREVIOUS ones persist (coasted at their
+  // ego-compensated position) for filter_hold frames before dropping -- the
+  // clustering flickers, and each flicker used to delete the circle for a frame
+  // (a measured 28% per-tick missed-update rate for downstream consumers).
   std::vector<Circle> temporalFilter(const std::vector<Circle>& fresh) {
     if (filter_alpha_ <= 0.0 || !have_odom_) return fresh;   // off / no ego-motion
-    if (!have_prev_) { prev_ = fresh; snapPrevPose(); have_prev_ = true; return fresh; }
+    if (!have_prev_) {
+      prev_.clear();
+      for (const Circle& c : fresh) prev_.push_back({c, 0});
+      snapPrevPose();
+      have_prev_ = true;
+      return fresh;
+    }
 
     std::vector<Circle> pred(prev_.size());
-    for (size_t k = 0; k < prev_.size(); ++k) pred[k] = predictToCurrent(prev_[k]);
+    for (size_t k = 0; k < prev_.size(); ++k) pred[k] = predictToCurrent(prev_[k].c);
 
     std::vector<char> used(pred.size(), 0);
     const float gate2 = static_cast<float>(filter_assoc_ * filter_assoc_);
     const float a = static_cast<float>(filter_alpha_);
     std::vector<Circle> out;
+    std::vector<Held> next;
     out.reserve(fresh.size());
     for (const Circle& c : fresh) {
       int best = -1;
@@ -318,11 +198,20 @@ class ObstacleCirclesNode {
         f.y = a * pred[best].y + (1.0f - a) * c.y;
         f.r = a * pred[best].r + (1.0f - a) * c.r;
         out.push_back(f);
+        next.push_back({f, 0});
       } else {
         out.push_back(c);                                   // new obstacle: immediate
+        next.push_back({c, 0});
       }
     }
-    prev_ = out;
+    for (size_t k = 0; k < pred.size(); ++k) {              // unmatched previous
+      if (used[k]) continue;
+      if (prev_[k].miss + 1 <= filter_hold_) {
+        out.push_back(pred[k]);                             // coasted, still visible
+        next.push_back({pred[k], prev_[k].miss + 1});
+      }
+    }
+    prev_ = next;
     snapPrevPose();
     return out;
   }
@@ -361,15 +250,20 @@ class ObstacleCirclesNode {
       std::vector<int> labels = dbscan(pts, eps_, min_samples_);
       int max_lab = -1;
       for (int l : labels) max_lab = std::max(max_lab, l);
+      const double odom[3] = {odom_x_, odom_y_, odom_yaw_};
       for (int lab = 0; lab <= max_lab; ++lab) {
         std::vector<Pt> cluster;
         for (size_t i = 0; i < pts.size(); ++i)
           if (labels[i] == lab) cluster.push_back(pts[i]);
         if (cluster.empty()) continue;
         for (const Pt& q : cluster) cluster_pts.push_back(q);
-        wrap_cluster(cluster, margin_, max_radius_, circles);
+        wrap_cluster(cluster, margin_, max_radius_, kasa_rms_, grid_cell_,
+                     have_odom_ ? odom : nullptr, circles);
       }
       circles = drop_redundant(circles, cluster_pts);
+      // a split object comes back as ONE circle (and adjacent wall chunks
+      // coalesce) -- the split pair destabilised the planner's tracker
+      circles = merge_circles(circles, static_cast<float>(max_radius_));
     }
 
     circles = temporalFilter(circles);   // ego-motion-compensated de-jitter
@@ -483,11 +377,14 @@ class ObstacleCirclesNode {
   bool publish_points_ = true;
   int points_stride_ = 1;
 
-  // temporal filter (ego-motion-compensated per-circle EMA)
+  // temporal filter (ego-motion-compensated per-circle EMA + flicker hold)
+  struct Held { Circle c; int miss; };
   double filter_alpha_ = 0.5, filter_assoc_ = 0.4;
+  int filter_hold_ = 2;
+  double kasa_rms_ = 0.02, grid_cell_ = 0.35;
   double odom_x_ = 0, odom_y_ = 0, odom_yaw_ = 0;
   bool have_odom_ = false;
-  std::vector<Circle> prev_;
+  std::vector<Held> prev_;
   double prev_x_ = 0, prev_y_ = 0, prev_yaw_ = 0;
   bool have_prev_ = false;
 
