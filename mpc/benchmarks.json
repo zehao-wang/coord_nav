@@ -42,8 +42,8 @@
      "success": 0.895
     }
    },
-   "commit": "efbd2b5",
-   "date": "2026-08-04",
+   "commit": "250d5bc",
+   "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
   },
@@ -59,8 +59,8 @@
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.277,
-     "mean_time_s": 4.2,
+     "mean_min_clearance": 0.291,
+     "mean_time_s": 4.19,
      "success": 1.0
     },
     "L3_dyn_single": {
@@ -75,21 +75,21 @@
     "L4_dyn_complex": {
      "collision": 0.03,
      "episodes": 200,
-     "mean_min_clearance": 0.297,
-     "mean_time_s": 9.49,
-     "mean_turn_deg": 25.2,
+     "mean_min_clearance": 0.296,
+     "mean_time_s": 9.44,
+     "mean_turn_deg": 24.2,
      "success": 0.97,
-     "tail_wander_m": 0.163
+     "tail_wander_m": 0.165
     },
     "overall": {
      "collision": 0.01,
      "episodes": 600,
-     "mean_min_clearance": 0.37,
-     "mean_time_s": 8.07,
+     "mean_min_clearance": 0.372,
+     "mean_time_s": 8.05,
      "success": 0.99
     }
    },
-   "commit": "922898a",
+   "commit": "250d5bc",
    "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
@@ -136,8 +136,8 @@
      "success": 0.5867
     }
    },
-   "commit": "efbd2b5",
-   "date": "2026-08-04",
+   "commit": "250d5bc",
+   "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
   },
@@ -153,7 +153,7 @@
     "L2_static_tight": {
      "collision": 0.6,
      "episodes": 120,
-     "mean_min_clearance": 0.128,
+     "mean_min_clearance": 0.126,
      "mean_time_s": 4.76,
      "success": 0.35
     },
@@ -169,21 +169,21 @@
     "L4_dyn_complex": {
      "collision": 0.185,
      "episodes": 200,
-     "mean_min_clearance": 0.249,
+     "mean_min_clearance": 0.251,
      "mean_time_s": 11.44,
      "mean_turn_deg": 6.9,
-     "success": 0.765,
-     "tail_wander_m": 0.142
+     "success": 0.77,
+     "tail_wander_m": 0.141
     },
     "overall": {
      "collision": 0.2067,
      "episodes": 600,
-     "mean_min_clearance": 0.301,
+     "mean_min_clearance": 0.302,
      "mean_time_s": 10.41,
-     "success": 0.7417
+     "success": 0.7433
     }
    },
-   "commit": "922898a",
+   "commit": "250d5bc",
    "date": "2026-08-05",
    "protocol": 1,
    "seeds": 20
