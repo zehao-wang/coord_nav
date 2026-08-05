@@ -3,6 +3,49 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.21 - 2026-08-05 - hardening review round: split-cluster phantom, extraction fixes at the source, live tracker overlay
+
+Adversarial review of the 0.9.19/0.9.20 layers (12 agents, 9 confirmed, 0
+refuted) plus a user question that turned out to be the sharpest one of the
+session: "can obstacle JUMPS make the velocity prediction wrong?" Answer
+before this round: yes, one way -- a clustering SPLIT could synthesize a
+sustained, perfectly coherent, fully gated 0.45 m/s phantom on a static
+object (same-frame double-merge overwrote the raw-obs anchor; the constant
+cross-centroid vector then read as motion). Fixed structurally: every track
+absorbs AT MOST ONE observation per frame -- a split now spawns an adjacent
+track and the isolation gate silences both. Jump semantics are now pinned by
+tests: in-range jumps can only produce a same-direction SLOWDOWN (degrades
+toward frozen-world), direction-flipping samples close the gate that tick,
+out-of-range jumps spawn silent new tracks. Wrong-direction velocity cannot
+persist.
+
+Also in this round:
+- association picks the nearest ELIGIBLE track (the young boost was shadowed
+  by marginally-nearer mature tracks); displacement gate rate-normalises by
+  actual anchor age; 18 memory columns got named constants; variant alias
+  tables unified in config.V1_SPECS/V2_SPECS (three drifted copies).
+- benchmark integrity: protocol params pinned at call sites, _stamp() marks
+  dirty trees, static-tier benchmark animations replay with substeps=1
+  (metrics byte-identical to the scored episode); tracker_eval uses
+  independent per-episode RNG and the tests import ITS harness (constants
+  had already diverged between the two copies). Full 4-row table rebuilt at
+  one clean commit (the review caught rows mixed across tracker versions --
+  exactly the trust failure the table exists to prevent).
+- GUI: the top-down view now draws the tracker overlay LIVE -- purple
+  velocity arrows with m/s labels on anything the tracker gates as moving,
+  plus dashed +1s/+2s constant-velocity ghosts when a *_t policy is driving
+  (the operator sees what the planner believes). The same data lands in
+  run.json for post-run analysis.
+- **perception extraction fixed at the source** (obstacle_perception; needs
+  an on-car rebuild): pure logic split into ROS-free clustering.h with a
+  workstation g++ test. Odom-anchored wall chunking kills the dominant
+  phantom source (interior chunk slide 0.090 -> 0.015 m/tick; 0.090/tick =
+  0.27 m/s apparent velocity, matching the recorded phantom p90 0.245);
+  Kasa arc fit recovers a compact object's TRUE centre (approach drift
+  0.05-0.10 m -> 0.0000); merge_circles rejoins split objects; temporalFilter
+  holds flickering circles 2 frames (the measured 28% missed-update rate was
+  flicker deletion). The tracker gates stay as defence-in-depth.
+
 ## 0.9.20 - 2026-08-05 - perception hardening: the _t tracker now survives REAL sensor data
 
 The gap: replaying 220 recorded on-car ticks (all-static scenes, the 0.9.14
