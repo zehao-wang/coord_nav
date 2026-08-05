@@ -81,26 +81,56 @@ def test_young_boost_pins_fast_mover_acquisition():
     assert speed_off == 0.0                           # fragments without it
 
 
-def test_trust_range_gates_far_tracks_but_bookkeeping_continues():
-    # live-measured: ALL residual phantoms sat at 2.2-3.0 m (sparse, flickery
-    # far returns). Velocities are only TRUSTED within vel_trust_range of the
-    # car -- but bookkeeping runs at range, so a mover ENTERING the zone is
-    # usable the tick it crosses, with no fresh acquisition delay.
+def test_tiered_trust_bands_and_bookkeeping_at_range():
+    # live-measured: residual phantoms sit beyond ~2.2 m. Tiered admission:
+    # silent beyond vel_far_range; between trust_range and far_range a MATURE
+    # track passing the STRICT set is trusted (a clean approaching mover is
+    # usable ~1.7 s sooner); bookkeeping runs at any range.
+    cfg = C.ObstacleConfig()
     clk = {"t": 0.0}
-    field = ObstacleField(C.ObstacleConfig(), lambda: clk["t"])
-    x = 2.9                                    # approaching mover, car at origin
-    for k in range(8):
+    field = ObstacleField(cfg, lambda: clk["t"])
+    x = 3.15                                   # approaching mover, car at origin
+    first_gated_at = None
+    for k in range(12):
         field.update([(x, 0.0, 0.12)], (0, 0, 0))
         v = field.velocities()
-        if x > C.ObstacleConfig().vel_trust_range:
-            assert not np.any(v)               # far: silenced
+        moving = len(v) and np.any(v)
+        if x > cfg.vel_far_range:
+            assert not moving                  # beyond the far band: silenced
+        elif moving and first_gated_at is None:
+            first_gated_at = x
+            assert np.hypot(v[0, 0], v[0, 1]) == pytest.approx(0.3, abs=0.05)
         clk["t"] += TICK
         x -= 0.3 * TICK
-    # now inside the trust zone: immediately trusted at the right speed
-    assert x < C.ObstacleConfig().vel_trust_range
-    field.update([(x, 0.0, 0.12)], (0, 0, 0))
-    v = field.velocities()
-    assert np.hypot(v[0, 0], v[0, 1]) == pytest.approx(0.3, abs=0.05)
+    # trusted somewhere INSIDE the far band, before the near zone
+    assert first_gated_at is not None
+    assert cfg.vel_trust_range < first_gated_at <= cfg.vel_far_range
+
+
+def test_early_tier_admits_a_clean_young_track():
+    # a fresh mover in the near zone passing the STRICT set is trusted at
+    # n >= vel_early_sightings (3): acquisition floor 1.7 s -> 1.0 s
+    cfg = C.ObstacleConfig()
+    clk = {"t": 0.0}
+    field = ObstacleField(cfg, lambda: clk["t"])
+    y = -0.5
+    gated_n = None
+    speeds = []
+    for k in range(6):
+        field.update([(1.5, y, 0.12)], (0, 0, 0))
+        v = field.velocities()
+        if len(v) and np.any(v):
+            speeds.append(float(np.hypot(v[0, 0], v[0, 1])))
+            if gated_n is None:
+                gated_n = k + 1
+                # at admission the EMA is still ramping (2 samples = 75% of
+                # true): direction right, magnitude a conservative UNDERestimate
+                assert 0.15 <= speeds[-1] <= 0.35
+                assert v[0, 1] > 0
+        clk["t"] += TICK
+        y += 0.3 * TICK
+    assert gated_n is not None and gated_n <= cfg.vel_early_sightings + 1
+    assert speeds[-1] == pytest.approx(0.3, abs=0.05)   # converged shortly after
 
 
 def test_observation_jump_closes_the_gate_instead_of_lying():

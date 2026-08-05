@@ -306,15 +306,22 @@ class ObstacleConfig:
     assoc_young_boost: float = 0.07   # extra match radius (m) for tracks with <3
                                       # sightings: a 0.45 m/s mover's first re-sighting
                                       # lands beyond merge_dist and fragmented forever
-    vel_trust_range: float = 2.2      # m: velocities are only TRUSTED for tracks this
-                                      # close to the car. The 2026-08-05 no-human live
-                                      # capture (new perception) had ALL residual phantom
-                                      # events at 2.2-3.0 m -- beam spacing ~5 cm and
-                                      # flickery returns at range make far centroids
-                                      # jitter beyond what the gates were tuned for.
-                                      # BOOKKEEPING is unrestricted: sightings/velocity
-                                      # accumulate at range, so a mover entering the
-                                      # trust zone is usable immediately.
+    vel_trust_range: float = 2.2      # m: NORMAL-gate trust zone. The 2026-08-05 no-human
+                                      # live capture had ALL residual phantom events at
+                                      # 2.2-3.0 m (beam spacing ~5 cm + flickery far
+                                      # returns jitter centroids). BOOKKEEPING is
+                                      # unrestricted at any range.
+    # --- TIERED admission (2026-08-05 latency pass; harness-tuned on three real
+    # captures + noise-matched injected movers: +1 false event in 7823
+    # velocity-bearing track-ticks bought near-cross acquisition 2.2->1.3 s and
+    # far-approach 2.7->1.0 s):
+    vel_far_range: float = 2.8        # m: between trust_range and this, velocities pass
+                                      # only with n>=vel_min_sightings AND the STRICT set
+    vel_early_sightings: int = 3      # within trust_range, a track this young is trusted
+                                      # if it passes the STRICT set (1.0 s floor vs 1.7 s)
+    vel_strict_coherence: float = 0.95
+    vel_strict_isolation: float = 0.5
+    vel_strict_rate_mult: float = 1.5 # strict disp-rate = this x the normal minimum
     pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
                                       # beyond ~2.5 s a constant-velocity guess is fiction
                                       # (bounces, stops), so the prediction holds there.

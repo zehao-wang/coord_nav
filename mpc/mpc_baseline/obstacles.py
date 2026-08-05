@@ -122,18 +122,29 @@ class ObstacleField(object):
             iso = dd.min(axis=1)
         else:
             iso = np.full(len(m), np.inf)
-        gate = ((m[:, N] >= self.cfg.vel_min_sightings) &
-                (sp >= self.cfg.vel_deadband) &
-                (coher >= self.cfg.vel_coherence) &
-                (iso >= self.cfg.vel_isolation) &
-                (disp_rate >= min_rate))
+        # TIERED admission (harness-tuned, see ObstacleConfig): the NORMAL set
+        # inside the trust zone; a STRICTER set both admits young tracks early
+        # (n >= vel_early_sightings: acquisition floor 1.7 -> 1.0 s) and
+        # extends trust to vel_far_range for mature tracks (a mover approaching
+        # from ~3 m is usable ~1.7 s sooner). Cost measured at +1 false event
+        # in 7823 velocity-bearing track-ticks over three real captures.
+        normal = ((m[:, N] >= self.cfg.vel_min_sightings) &
+                  (coher >= self.cfg.vel_coherence) &
+                  (iso >= self.cfg.vel_isolation) &
+                  (disp_rate >= min_rate))
+        strict = ((coher >= self.cfg.vel_strict_coherence) &
+                  (iso >= self.cfg.vel_strict_isolation) &
+                  (disp_rate >= self.cfg.vel_strict_rate_mult * min_rate))
+        gate = (sp >= self.cfg.vel_deadband)
         if self._car_xy is not None:
-            # trust-range gate: far lidar centroids jitter beyond what the
-            # other gates were tuned for (live-measured: all residual phantoms
-            # at 2.2-3.0 m). Bookkeeping continues at range; only OUTPUT is
-            # gated, so a mover entering the zone is usable immediately.
             dcar = np.hypot(m[:, X] - self._car_xy[0], m[:, Y] - self._car_xy[1])
-            gate &= dcar <= self.cfg.vel_trust_range
+            near = dcar <= self.cfg.vel_trust_range
+            far = (~near) & (dcar <= self.cfg.vel_far_range)
+            early = (m[:, N] >= self.cfg.vel_early_sightings) & strict
+            gate &= ((near & (normal | early)) |
+                     (far & (m[:, N] >= self.cfg.vel_min_sightings) & strict))
+        else:
+            gate &= normal
         v[~gate] = 0.0
         return v
 
