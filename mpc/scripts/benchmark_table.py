@@ -31,6 +31,11 @@ def main():
     ap.add_argument("--check", default=None, metavar="KEY",
                     help="re-run KEY and verify its stored row reproduces "
                          "exactly (exit 1 on any diff)")
+    ap.add_argument("--anim", default=None, metavar="DIR",
+                    help="render the seed-0 episode of every eval-set case for "
+                         "the chosen policies (files ordered L1..L4) INSTEAD of "
+                         "updating the table -- the table's visual companion")
+    ap.add_argument("--anim-fmt", choices=("mp4", "gif"), default="mp4")
     args = ap.parse_args()
 
     unknown = [p for p in args.policy + ([args.check] if args.check else [])
@@ -52,6 +57,10 @@ def main():
         return
 
     keys = args.policy or list(BASELINES)
+    if args.anim:
+        B.animate_set(keys, args.anim, fmt=args.anim_fmt)
+        print("\nwrote animations to %s" % args.anim)
+        return
     B.update(keys)
     print("\nwrote %s and %s" % (B.JSON_PATH, B.MD_PATH))
 

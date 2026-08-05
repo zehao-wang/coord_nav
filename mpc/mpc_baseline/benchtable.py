@@ -200,6 +200,44 @@ def check(key, seeds=SEEDS, the_set=None, json_path=JSON_PATH, log=print):
     return diffs
 
 
+def animate_set(keys, outdir, fmt="mp4", seed=0, the_set=None, log=print):
+    """Render the seed-`seed` episode of every eval-set case for each policy --
+    the benchmark table's visual companion (files ordered L1..L4).
+
+    Field tiers render the exact scored episode. Static tiers replay the same
+    policy/seed through the field renderer with occlusion OFF and no movers,
+    which feeds the policy inputs identical to the scored KinematicSim run --
+    the trajectory equality is regression-tested, so the video IS the episode
+    the table scored, not a lookalike."""
+    the_set = the_set or eval_set()
+    os.makedirs(outdir, exist_ok=True)
+    paths = []
+    for key in keys:
+        for ti, tier in enumerate(TIERS):
+            spec = the_set[tier]
+            if spec[0] == "static":
+                _, worlds, gd = spec
+                arena = (-0.8, -1.4, gd + 0.8, 1.4)
+                cases = [TF.Case(w.name, w.start,
+                                 tuple(tuple(c) for c in w.circles), (), arena)
+                         for w in worlds]
+                kw = {"goal_dist": gd,
+                      "perception": TF.PerceptionConfig(occlusion=False)}
+            else:
+                cases = spec[1]
+                kw = {"goal_dist": 3.0}
+            for ci, case in enumerate(cases):
+                p = os.path.join(outdir, "%d%02d_%s_%s_%s.%s"
+                                 % (ti + 1, ci, tier, case.name, key, fmt))
+                res, _ = TF.animate_case(key, case, p, seed=seed,
+                                         magnitude=MAGNITUDE, **kw)
+                log("  %-12s %-16s %-18s %s" % (
+                    key, tier, case.name,
+                    "R" if res.reached else ("C" if res.collided else "x")))
+                paths.append(p)
+    return paths
+
+
 def write_md(table, md_path=MD_PATH):
     lines = [
         "# MPC benchmark -- fixed eval protocol + tiered set, v%d"

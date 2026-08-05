@@ -44,6 +44,25 @@ def test_update_and_check_roundtrip(tmp_path):
     assert "`mpc_grid`" in md and "STALE" not in md
 
 
+def test_static_tier_animation_replay_is_the_scored_episode():
+    # animate_set replays static tiers through the field renderer (occlusion
+    # off, no movers): the trajectory must be BYTE-IDENTICAL to the episode the
+    # table scored through run_policy/KinematicSim -- the video is the episode,
+    # not a lookalike
+    from mpc_baseline import testfield as TF
+    from mpc_baseline.eval import run_policy
+    from mpc_baseline.sim import realistic_scenarios
+    w = realistic_scenarios(3.0)[0]
+    scored = run_policy("mpc_grid", [w], goal_dist=3.0, seed=2,
+                        disturbed=True)[0]
+    case = TF.Case(w.name, w.start, tuple(tuple(c) for c in w.circles), (),
+                   (-0.8, -1.4, 3.8, 1.4))
+    replay = TF.run_case("mpc_grid", case, seed=2, goal_dist=3.0,
+                         perception=TF.PerceptionConfig(occlusion=False))
+    assert np.array_equal(scored.traj, replay.traj)
+    assert scored.reached == replay.reached
+
+
 def test_check_flags_a_changed_row(tmp_path):
     jp, mp = str(tmp_path / "b.json"), str(tmp_path / "b.md")
     B.update(["mpc_grid"], seeds=1, the_set=_tiny_set(), json_path=jp,
