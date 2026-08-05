@@ -120,11 +120,14 @@ def main():
 
     print("\n== positives: injected movers (measured noise, %d%% dropout) ==" %
           round(DROPOUT * 100))
-    rng = np.random.default_rng(args.seed)
     for speed in (0.25, 0.35, 0.45):
-        outs = [injected_acquisition(frames, speed, h, rng)
-                for _, frames in runs
-                for h in (np.pi / 2, np.pi, np.pi / 4)]
+        # one INDEPENDENT rng per episode: a shared stream made every number
+        # depend on evaluation order (adding a speed changed the others)
+        outs = [injected_acquisition(frames, speed, h,
+                                     np.random.default_rng(
+                                         [args.seed, int(speed * 100), ri, hi]))
+                for ri, (_, frames) in enumerate(runs)
+                for hi, h in enumerate((np.pi / 2, np.pi, np.pi / 4))]
         got = [x for x in outs if x is not None]
         print("  %.2f m/s: acquired %d/%d  median latency %s" % (
             speed, len(got), len(outs),

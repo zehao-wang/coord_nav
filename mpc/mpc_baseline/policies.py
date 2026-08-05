@@ -200,10 +200,11 @@ class Variant2Policy(Policy):
 
 
 def make_policy(variant, cfg, **kw):
-    """variant in {1, 2, '1', '2', 'vw', 'grid'} -> the matching policy instance."""
+    """variant spec (config.V1_SPECS / V2_SPECS) -> the matching policy."""
+    from .config import V1_SPECS, V2_SPECS
     v = str(variant).lower()
-    if v in ("1", "vw", "v1"):
+    if v in V1_SPECS:
         return Variant1Policy(cfg, **kw)
-    if v in ("2", "grid", "v2"):
+    if v in V2_SPECS:
         return Variant2Policy(cfg, **kw)
     raise ValueError("unknown variant %r (use 1 or 2)" % (variant,))

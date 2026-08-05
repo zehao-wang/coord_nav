@@ -377,6 +377,10 @@ def animate_case(spec, case, path, seed=0, goal_dist=3.0, disturbed=True,
     snaps = None
     _, _cfg, _ = resolve_policy(spec, goal_dist=goal_dist, disturbed=disturbed,
                                 magnitude=kw.get("magnitude", 40.0))
+    if kw.get("tweak") is not None:
+        # the overlay probe must see the same cfg the scored episode ran with
+        # (a tweak can flip predict_obstacles either way)
+        kw["tweak"](_cfg)
     if getattr(_cfg, "predict_obstacles", False) and not p.noise_xy and not p.dropout:
         clk = {"t": 0.0}
         field = ObstacleField(kw.get("obs_cfg") or C.ObstacleConfig(),

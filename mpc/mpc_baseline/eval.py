@@ -16,8 +16,8 @@ from .sim import KinematicSim, run_episode, default_scenarios
 from .policies import Variant1Policy, Variant2Policy
 from .registry import POLICY_REGISTRY, build_policy
 
-_V1 = ("1", "vw", "v1")
-_V2 = ("2", "grid", "v2")
+_V1 = C.V1_SPECS
+_V2 = C.V2_SPECS
 
 
 def _cfg_for(variant, live, goal_dist):

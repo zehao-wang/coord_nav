@@ -57,10 +57,15 @@ def test_static_tier_animation_replay_is_the_scored_episode():
                         disturbed=True)[0]
     case = TF.Case(w.name, w.start, tuple(tuple(c) for c in w.circles), (),
                    (-0.8, -1.4, 3.8, 1.4))
-    replay = TF.run_case("mpc_grid", case, seed=2, goal_dist=3.0,
+    replay = TF.run_case("mpc_grid", case, seed=2, goal_dist=3.0, substeps=1,
                          perception=TF.PerceptionConfig(occlusion=False))
     assert np.array_equal(scored.traj, replay.traj)
     assert scored.reached == replay.reached
+    # substeps=1 makes the METRICS identical too: the mid-tick sweep against
+    # static obstacles could report a smaller min_clearance than the scored
+    # endpoint check (and in principle flip an outcome)
+    assert scored.min_clearance == replay.min_clearance
+    assert scored.collided == replay.collided
 
 
 def test_check_flags_a_changed_row(tmp_path):

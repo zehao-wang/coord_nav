@@ -135,8 +135,10 @@ def run_protocol(key, seeds=SEEDS, the_set=None, log=print):
                 rs += run_policy(key, worlds, goal_dist=gd, magnitude=MAGNITUDE,
                                  seed=s, disturbed=True)
         else:
-            rs = TF.run_field([key], spec[1], seeds=seeds,
-                              magnitude=MAGNITUDE)[key]
+            # every protocol parameter PINNED here, never inherited from a
+            # testfield default that could drift under the protocol version
+            rs = TF.run_field([key], spec[1], seeds=seeds, goal_dist=3.0,
+                              disturbed=True, magnitude=MAGNITUDE)[key]
         row["cells"][tier] = _cell(rs, extra_metrics=tier.startswith(("L3", "L4")))
         all_rs += rs
         log("  %-16s %-16s %.3f/%.3f" % (key, tier,
@@ -151,6 +153,13 @@ def _stamp():
         commit = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], cwd=_ROOT,
             stderr=subprocess.DEVNULL).decode().strip()
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=_ROOT,
+            stderr=subprocess.DEVNULL).decode().strip()
+        if dirty:
+            # a row stamped from a dirty tree cannot be reproduced from the
+            # commit alone -- say so in the table instead of lying
+            commit += "+dirty"
     except Exception:
         commit = "unknown"
     return {"commit": commit, "date": date.today().isoformat()}
@@ -221,11 +230,16 @@ def animate_set(keys, outdir, fmt="mp4", seed=0, the_set=None, log=print):
                 cases = [TF.Case(w.name, w.start,
                                  tuple(tuple(c) for c in w.circles), (), arena)
                          for w in worlds]
-                kw = {"goal_dist": gd,
+                # substeps=1: the scored KinematicSim episode checks clearance
+                # at tick endpoints only; the field renderer's mid-tick sweep
+                # against static obstacles could report a smaller min_clearance
+                # (and in principle flip an outcome). One sub-step makes the
+                # replay's metrics identical, not just its trajectory.
+                kw = {"goal_dist": gd, "substeps": 1,
                       "perception": TF.PerceptionConfig(occlusion=False)}
             else:
                 cases = spec[1]
-                kw = {"goal_dist": 3.0}
+                kw = {"goal_dist": 3.0, "disturbed": True}
             for ci, case in enumerate(cases):
                 p = os.path.join(outdir, "%d%02d_%s_%s_%s.%s"
                                  % (ti + 1, ci, tier, case.name, key, fmt))

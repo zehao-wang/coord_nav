@@ -525,10 +525,26 @@ class PolicyRunner(object):
             self.log("gd=%.2f act=%d mag=%.0f obs=%d" % (
                 gd, action, self.live.magnitude, len(obs.circles)))
         if self.on_step is not None:
-            self.on_step({"pose": pose.tolist(), "goal": goal.tolist(), "gd": gd,
-                          "action": action, "v": v, "w": w,
-                          "n_obs": len(obs.circles), "policy": self.label,
-                          "traj": traj.tolist() if traj is not None else None})
+            rec = {"pose": pose.tolist(), "goal": goal.tolist(), "gd": gd,
+                   "action": action, "v": v, "w": w,
+                   "n_obs": len(obs.circles), "policy": self.label,
+                   "traj": traj.tolist() if traj is not None else None}
+            # tracker overlay for the GUI: remembered circles with a GATED
+            # velocity (odom frame), plus -- for the time-aware policies -- the
+            # constant-velocity predictions the obstacle cost actually scores
+            # against (+1 s / +2 s), so the operator can SEE what the planner
+            # believes is moving and where it thinks it is headed
+            vel = self.field.velocities()
+            if len(vel):
+                moving = (vel[:, 0] != 0.0) | (vel[:, 1] != 0.0)
+                if moving.any():
+                    circ = self.field.circles()
+                    rec["tracks"] = np.column_stack(
+                        [circ[moving], vel[moving]]).tolist()
+                    if getattr(self.cfg, "predict_obstacles", False):
+                        rec["pred"] = self.field.predict(
+                            [1.0, 2.0])[:, moving, :].tolist()
+            self.on_step(rec)
 
     @staticmethod
     def _pose_rel(pose, start):

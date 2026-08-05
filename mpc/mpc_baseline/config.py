@@ -17,6 +17,12 @@ Frames & units throughout the package:
 from dataclasses import dataclass, field
 from typing import Tuple
 
+# THE variant alias tables -- single source for make_policy, eval.resolve_policy
+# and build_live_cfg (they were triplicated and had already drifted: only
+# build_live_cfg accepted "velocity"/"discrete").
+V1_SPECS = ("1", "vw", "v1", "velocity")
+V2_SPECS = ("2", "grid", "v2", "discrete")
+
 
 # --- physical / kinematic ------------------------------------------------
 @dataclass
@@ -410,7 +416,7 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
     # and build_policy's action_space check compares the entry against the POLICY,
     # never against the cfg, so it does not catch it either.
     v = str(variant).lower()
-    if v in ("1", "vw", "v1", "velocity"):
+    if v in V1_SPECS:
         c = live_config_v1()
         if pwm_offset is not None:
             c.robot.pwm_offset = pwm_offset
@@ -419,7 +425,7 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
         # over-states v_max by pwm_offset/pwm_per_mps (0.19 m/s at these constants).
         c.v_max = _v_of_pwm(magnitude, c.robot)
         c.robot.wheel_pwm_cap = max(c.robot.wheel_pwm_cap, magnitude * 1.8)
-    elif v in ("2", "grid", "v2", "discrete"):
+    elif v in V2_SPECS:
         c = live_config_v2()
         c.step_magnitude = magnitude
         c.step_duration = step_duration
@@ -431,7 +437,7 @@ def build_live_cfg(variant, magnitude, goal_dist, goal_y=0.0, goal_tol=0.15,
             "continuous (v,w) config or 2/'grid'/'discrete' for the mecanum-action "
             "config. (This used to fall through to variant 2, handing a velocity "
             "policy a Variant2Config with no .v_max/.mppi.)" % (variant,))
-    if v in ("1", "vw", "v1", "velocity"):
+    if v in V1_SPECS:
         # Below the magnitude where v clears yaw_deadband*arm/(1-min_inner_frac),
         # the policy's achievable-yaw clip is identically 0: the planner would drive
         # dead straight with no steering channel, so the obstacle cost could not

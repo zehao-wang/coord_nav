@@ -7,13 +7,21 @@ transformed to odom, merged with recent ones, and old/far ones are pruned. Set
 ObstacleConfig.mem_time_s = 0 to fall back to current-frame-only.
 
 The field also estimates each tracked circle's VELOCITY from the frame sequence
-(constant-velocity tracking: per-track finite difference + EMA, with a sighting
-gate, a deadband and a speed cap so noise on a static box never invents motion).
-Estimation always runs -- it is pure bookkeeping -- but it only changes planning
-when a policy asks for `predict()` / `clearance_pred()` (the *_t "time-aware"
-registry variants do; the plain variants keep the frozen-world queries). This is
-the standard constant-velocity-prediction baseline for MPC with dynamic
-obstacles, and it lives HERE so the live runner and the sim share it verbatim.
+(constant-velocity tracking: per-track finite difference of RAW observations +
+EMA + a battery of gates tuned on real recordings -- see _vel). Estimation
+always runs -- it is pure bookkeeping -- but it only changes planning when a
+policy asks for `predict()` / `clearance_pred()` (the *_t "time-aware" registry
+variants do; the plain variants keep the frozen-world queries). This is the
+standard constant-velocity-prediction baseline for MPC with dynamic obstacles,
+and it lives HERE so the live runner and the sim share it verbatim.
+
+A structural invariant of `update`: EVERY TRACK ABSORBS AT MOST ONE OBSERVATION
+PER FRAME. Without it, a physical object split into two circles by clustering
+double-merged into one track, and the dt=0 second merge overwrote the raw-obs
+anchor -- the next frame then measured a constant cross-centroid "velocity"
+that was perfectly coherent and sustained (a gated 0.45 m/s phantom on a STATIC
+object). With the invariant, a split spawns a SECOND track next to the first,
+and the isolation gate silences both.
 
 All planner queries are vectorised: pass an (M, 2) array of query points and get
 per-point clearance or collision flags against every remembered circle.
@@ -23,6 +31,24 @@ import numpy as np
 
 from .kinematics import base_to_odom
 
+# Column layout of ObstacleField._mem. (X, Y) is the EMA-smoothed position that
+# planning queries use; (OX, OY) is the last RAW observation -- velocity must
+# difference raw observations, because the EMA position lags a steady mover by
+# v*T and differencing against it overestimates the speed by exactly 2x.
+# (SVX, SVY, SMAG) are decayed sums of raw velocity samples for the coherence
+# gate. (A1*, A2*) are ping-pong anchors for the net-displacement gate: A2 is
+# refreshed at half-window cadence, A1 is the retired previous A2, so the
+# displacement baseline stays roughly [window/2, window] seconds old (and the
+# gate rate-normalises by the ACTUAL anchor age, so sighting gaps cannot
+# stretch the window silently).
+X, Y, R, T = 0, 1, 2, 3
+VX, VY, N = 4, 5, 6
+OX, OY = 7, 8
+SVX, SVY, SMAG = 9, 10, 11
+A1X, A1Y, A1T = 12, 13, 14
+A2X, A2Y, A2T = 15, 16, 17
+NCOLS = 18
+
 
 class ObstacleField(object):
     def __init__(self, cfg, wall_clock):
@@ -31,18 +57,7 @@ class ObstacleField(object):
         never calls a real clock itself and stays deterministic in sim."""
         self.cfg = cfg
         self._clock = wall_clock
-        # remembered circles in odom:
-        # rows [x, y, r, last_seen_t, vx, vy, n_sightings, obs_x, obs_y,
-        #       svx, svy, smag, a1x, a1y, a1t, a2x, a2y, a2t]
-        # (x, y) is the EMA-smoothed position planning queries use; (obs_x,
-        # obs_y) is the last RAW observation -- velocity must difference raw
-        # observations, because the EMA position lags a steady mover by v*T and
-        # differencing against it overestimates the speed by exactly 2x.
-        # (svx, svy, smag): decayed sums of raw velocity samples for the
-        # COHERENCE gate. (a1*, a2*): ping-pong displacement anchors for the
-        # NET-DISPLACEMENT gate (a1 = the older anchor, refreshed so the
-        # window stays within ~[0.5, 1] * vel_disp_window seconds).
-        self._mem = np.zeros((0, 18), dtype=float)
+        self._mem = np.zeros((0, NCOLS), dtype=float)
 
     @staticmethod
     def _rows(fresh, now):
@@ -60,46 +75,57 @@ class ObstacleField(object):
         """(N, 2) usable velocity per track, gated so REAL perception on a
         static world reads exactly 0 (and time-aware planning degenerates to
         the frozen-world planner). Replaying 220 recorded on-car ticks showed
-        the original sightings+deadband gates leaking phantom velocities on
-        95% of ticks (wall-cluster centroid slide + association churn, p90
-        0.245 m/s -- overlapping pedestrian speeds, so a deadband alone cannot
-        separate). The gates target the MECHANISMS instead; tuned on that
-        recording plus noise-matched injected movers (scripts/tracker_eval.py),
-        they cut phantom events by 97.7% while acquiring 0.25-0.35 m/s movers
-        in ~2 s:
+        naive sightings+deadband gating leaking phantom velocities on 95% of
+        ticks (wall-cluster centroid slide + association churn, p90 0.245 m/s
+        -- overlapping pedestrian speeds). The gates target the MECHANISMS;
+        tuned on that recording plus noise-matched injected movers
+        (scripts/tracker_eval.py), they cut phantom events by ~97% while
+        acquiring 0.25-0.35 m/s movers in ~2 s:
 
           sightings >= vel_min_sightings   young tracks say nothing
-          speed     >= vel_deadband        sub-jitter EMAs say nothing
+          speed     >= vel_deadband        cheap belt-and-braces floor (the
+                                           displacement gate below subsumes it
+                                           in every recorded scenario)
           coherence >= vel_coherence       |sum of raw samples|/sum|samples|:
                                            association churn flips direction,
                                            a real mover does not
-          isolation >= vel_isolation       walls arrive as CHAINS of clusters;
-                                           a mover crossing open floor is alone
-          net disp  >= vel_min_disp        over ~vel_disp_window s: centroid
-                                           slide wanders, a mover goes somewhere
+          isolation >= vel_isolation       walls arrive as CHAINS of clusters
+                                           (and a split object becomes TWO
+                                           adjacent tracks); a mover crossing
+                                           open floor is alone
+          disp rate >= min_disp/window     net displacement of raw obs per
+                                           second of ACTUAL anchor age: slide
+                                           wanders, a mover goes somewhere,
+                                           and a sighting gap only makes the
+                                           bar proportionally higher
         """
         if not len(self._mem):
             return np.zeros((0, 2))
         m = self._mem
-        v = m[:, 4:6].copy()
+        now = self._clock()
+        v = m[:, VX:VY + 1].copy()
         sp = np.hypot(v[:, 0], v[:, 1])
-        coher = np.where(m[:, 11] > 1e-9,
-                         np.hypot(m[:, 9], m[:, 10]) / np.maximum(m[:, 11], 1e-9),
+        coher = np.where(m[:, SMAG] > 1e-9,
+                         np.hypot(m[:, SVX], m[:, SVY]) /
+                         np.maximum(m[:, SMAG], 1e-9),
                          0.0)
-        disp = np.hypot(m[:, 7] - m[:, 12], m[:, 8] - m[:, 13])
+        disp = np.hypot(m[:, OX] - m[:, A1X], m[:, OY] - m[:, A1Y])
+        age = np.maximum(now - m[:, A1T], 0.5 * self.cfg.vel_disp_window)
+        disp_rate = disp / age
+        min_rate = self.cfg.vel_min_disp / self.cfg.vel_disp_window
         if len(m) > 1:
-            dx = m[:, 0][:, None] - m[:, 0][None, :]
-            dy = m[:, 1][:, None] - m[:, 1][None, :]
+            dx = m[:, X][:, None] - m[:, X][None, :]
+            dy = m[:, Y][:, None] - m[:, Y][None, :]
             dd = np.hypot(dx, dy)
             np.fill_diagonal(dd, np.inf)
             iso = dd.min(axis=1)
         else:
             iso = np.full(len(m), np.inf)
-        gate = ((m[:, 6] >= self.cfg.vel_min_sightings) &
+        gate = ((m[:, N] >= self.cfg.vel_min_sightings) &
                 (sp >= self.cfg.vel_deadband) &
                 (coher >= self.cfg.vel_coherence) &
                 (iso >= self.cfg.vel_isolation) &
-                (disp >= self.cfg.vel_min_disp))
+                (disp_rate >= min_rate))
         v[~gate] = 0.0
         return v
 
@@ -113,88 +139,87 @@ class ObstacleField(object):
         if self.cfg.mem_time_s <= 0.0:
             # current-frame-only: no cross-frame association, so no velocities
             self._mem = self._rows(fresh, now) if len(fresh) else \
-                np.zeros((0, 18))
+                np.zeros((0, NCOLS))
             return fresh
 
         # prune stale and far-away memory relative to the car's odom position
         if len(self._mem):
-            age_ok = (now - self._mem[:, 3]) <= self.cfg.mem_time_s
-            d = np.hypot(self._mem[:, 0] - pose[0], self._mem[:, 1] - pose[1])
+            age_ok = (now - self._mem[:, T]) <= self.cfg.mem_time_s
+            d = np.hypot(self._mem[:, X] - pose[0], self._mem[:, Y] - pose[1])
             near_ok = d <= self.cfg.mem_radius
             self._mem = self._mem[age_ok & near_ok]
 
-        # merge each fresh circle: refresh a nearby remembered one, else append.
-        # Association is against the COASTED position (last seen + v * gap) so a
-        # tracked mover that was hidden for a frame or two is re-acquired as the
-        # same track instead of spawning a fresh one with no velocity.
+        # Merge each fresh circle into at most one track, and each track absorbs
+        # at most ONE circle per frame (see module docstring for why that
+        # invariant is load-bearing). Association is against the COASTED raw
+        # observation (last raw obs + UNGATED velocity * gap): matching the
+        # lagging EMA position with the still-gated zero velocity meant a mover
+        # above ~0.30 m/s out-ran merge_dist before its gate ever opened and
+        # fragmented forever. A young track's raw velocity may be noisy, but it
+        # only biases ASSOCIATION; planning still sees the gated value. YOUNG
+        # tracks additionally get a wider match radius (assoc_young_boost): a
+        # fast mover's first re-sighting lands merge_dist + v*tick away.
+        claimed = set()
         for row in fresh:
             if len(self._mem):
-                gap = now - self._mem[:, 3]
-                # Coast from the RAW last observation with the UNGATED (but
-                # capped, EMA'd) velocity. Both choices are about the
-                # acquisition cliff: matching against the lagging EMA position
-                # with the GATED (still zero) velocity meant a mover above
-                # 0.30 m/s out-ran merge_dist before its gate ever opened,
-                # fragmenting into 1-sighting tracks with v=0 forever -- the
-                # 0.40 m/s cross_fast archetype was silently untrackable. A
-                # young track's raw velocity may be noisy, but it only biases
-                # ASSOCIATION; planning still sees the gated value.
-                px = self._mem[:, 7] + self._mem[:, 4] * gap
-                py = self._mem[:, 8] + self._mem[:, 5] * gap
+                gap = now - self._mem[:, T]
+                px = self._mem[:, OX] + self._mem[:, VX] * gap
+                py = self._mem[:, OY] + self._mem[:, VY] * gap
                 d = np.hypot(px - row[0], py - row[1])
-                # YOUNG tracks (no velocity to coast yet) get a wider match
-                # radius: a fast mover's first re-sighting lands merge_dist +
-                # v*tick away, and without the boost a ~0.45 m/s mover
-                # fragments before its velocity ever forms (measured on the
-                # recorded frames: acquisition latency at 0.45 m/s drops from
-                # ~4.7 s to ~3.3 s with the boost, phantom rate unchanged).
-                lim = np.where(self._mem[:, 6] < 3,
+                lim = np.where(self._mem[:, N] < 3,
                                self.cfg.merge_dist + self.cfg.assoc_young_boost,
                                self.cfg.merge_dist)
-                j = int(np.argmin(d))
-                if d[j] <= lim[j]:
-                    dt = now - self._mem[j, 3]
-                    if dt > 1e-6:
-                        # raw velocity = delta of RAW observations (see __init__:
-                        # differencing the EMA position doubles a steady mover's
-                        # speed), then EMA'd and capped so one bad association
-                        # cannot invent a fast phantom mover.
-                        rvx = (row[0] - self._mem[j, 7]) / dt
-                        rvy = (row[1] - self._mem[j, 8]) / dt
-                        sp = np.hypot(rvx, rvy)
-                        if sp > self.cfg.vel_cap:
-                            rvx *= self.cfg.vel_cap / sp
-                            rvy *= self.cfg.vel_cap / sp
-                        a = self.cfg.vel_ema
-                        self._mem[j, 4] = (1 - a) * self._mem[j, 4] + a * rvx
-                        self._mem[j, 5] = (1 - a) * self._mem[j, 5] + a * rvy
-                        # decayed sums for the coherence gate
-                        dcy = self.cfg.vel_coher_decay
-                        self._mem[j, 9] = dcy * self._mem[j, 9] + rvx
-                        self._mem[j, 10] = dcy * self._mem[j, 10] + rvy
-                        self._mem[j, 11] = dcy * self._mem[j, 11] + np.hypot(rvx, rvy)
-                    # EMA on position so a moving obstacle isn't frozen at its
-                    # first-seen spot; keep larger radius (conservative), refresh ts.
-                    self._mem[j, 0] = 0.5 * self._mem[j, 0] + 0.5 * row[0]
-                    self._mem[j, 1] = 0.5 * self._mem[j, 1] + 0.5 * row[1]
-                    self._mem[j, 2] = max(self._mem[j, 2], row[2])
-                    self._mem[j, 3] = now
-                    self._mem[j, 6] += 1
-                    self._mem[j, 7] = row[0]
-                    self._mem[j, 8] = row[1]
-                    # ping-pong displacement anchors: refresh the newer one at
-                    # half-window cadence, so the older anchor's age stays in
-                    # [window/2, window] and the disp gate never compares
-                    # against ancient history (a slow wall-slide would
-                    # eventually accumulate past any threshold)
-                    if now - self._mem[j, 17] > 0.5 * self.cfg.vel_disp_window:
-                        self._mem[j, 12:15] = self._mem[j, 15:18]
-                        self._mem[j, 15] = row[0]
-                        self._mem[j, 16] = row[1]
-                        self._mem[j, 17] = now
+                # eligible = within its OWN limit and not already fed this
+                # frame; pick the nearest eligible (argmin over all tracks used
+                # to shadow a young track whose boosted radius covered the
+                # observation whenever a mature track was marginally nearer)
+                elig = d <= lim
+                if claimed:
+                    elig[list(claimed)] = False
+                if elig.any():
+                    j = int(np.argmin(np.where(elig, d, np.inf)))
+                    claimed.add(j)
+                    self._merge(j, row, now)
                     continue
             self._mem = np.vstack([self._mem, self._rows(row[None, :], now)])
+            claimed.add(len(self._mem) - 1)   # a track born this frame is fed
         return self.circles()
+
+    def _merge(self, j, row, now):
+        """Fold one observation into track j (call at most once per frame)."""
+        m = self._mem
+        dt = now - m[j, T]
+        if dt > 1e-6:
+            # raw velocity = delta of RAW observations (see column notes), EMA'd
+            # and capped so one bad association cannot invent a fast phantom
+            rvx = (row[0] - m[j, OX]) / dt
+            rvy = (row[1] - m[j, OY]) / dt
+            sp = np.hypot(rvx, rvy)
+            if sp > self.cfg.vel_cap:
+                rvx *= self.cfg.vel_cap / sp
+                rvy *= self.cfg.vel_cap / sp
+            a = self.cfg.vel_ema
+            m[j, VX] = (1 - a) * m[j, VX] + a * rvx
+            m[j, VY] = (1 - a) * m[j, VY] + a * rvy
+            dcy = self.cfg.vel_coher_decay
+            m[j, SVX] = dcy * m[j, SVX] + rvx
+            m[j, SVY] = dcy * m[j, SVY] + rvy
+            m[j, SMAG] = dcy * m[j, SMAG] + np.hypot(rvx, rvy)
+        # EMA on position so a moving obstacle isn't frozen at its first-seen
+        # spot; keep the larger radius (conservative); refresh bookkeeping
+        m[j, X] = 0.5 * m[j, X] + 0.5 * row[0]
+        m[j, Y] = 0.5 * m[j, Y] + 0.5 * row[1]
+        m[j, R] = max(m[j, R], row[2])
+        m[j, T] = now
+        m[j, N] += 1
+        m[j, OX] = row[0]
+        m[j, OY] = row[1]
+        # ping-pong displacement anchors (see column notes)
+        if now - m[j, A2T] > 0.5 * self.cfg.vel_disp_window:
+            m[j, A1X:A1T + 1] = m[j, A2X:A2T + 1]
+            m[j, A2X] = row[0]
+            m[j, A2Y] = row[1]
+            m[j, A2T] = now
 
     def circles(self):
         """Remembered obstacles as (N, 3) [x, y, r] in odom."""
@@ -202,7 +227,7 @@ class ObstacleField(object):
 
     def velocities(self):
         """(N, 2) estimated odom velocity per remembered circle (gated: exactly
-        0 for tracks that are too young or below the deadband)."""
+        0 for any track the gates in _vel do not trust)."""
         return self._vel()
 
     # --- constant-velocity prediction (the *_t time-aware variants) --------
@@ -221,7 +246,7 @@ class ObstacleField(object):
             return np.zeros((len(dts), 0, 3))
         now = self._clock()
         vel = self._vel()                                    # (N, 2) gated
-        age = now - self._mem[:, 3]                          # (N,)
+        age = now - self._mem[:, T]                          # (N,)
         t = np.minimum(age[None, :] + dts[:, None], self.cfg.pred_cap_s)  # (T, N)
         base = self._mem[:, :3].copy()
         # Moving tracks extrapolate from the RAW last observation: the 50/50
@@ -231,8 +256,8 @@ class ObstacleField(object):
         # position, so a static world predicts exactly circles() and the
         # *_t == plain byte-identical guarantee survives.
         moving = (vel[:, 0] != 0.0) | (vel[:, 1] != 0.0)
-        base[moving, 0] = self._mem[moving, 7]
-        base[moving, 1] = self._mem[moving, 8]
+        base[moving, 0] = self._mem[moving, OX]
+        base[moving, 1] = self._mem[moving, OY]
         out = np.repeat(base[None, :, :], len(dts), axis=0)
         out[:, :, 0] += vel[None, :, 0] * t
         out[:, :, 1] += vel[None, :, 1] * t
@@ -280,7 +305,9 @@ class ObstacleField(object):
     def raw_min_distance(self, point):
         """Distance (m) from a single point to the nearest RAW circle edge
         (no robot inflation). Feeds the tick log's `dmem` column -- how close the
-        car is to the obstacles the POLICY remembers. +inf if no obstacles."""
+        car is to the obstacles the POLICY remembers. +inf if no obstacles.
+        NOTE: current positions, not predictions -- like the collision guard,
+        this column reports the world as last seen."""
         c = self.circles()
         if len(c) == 0:
             return np.inf

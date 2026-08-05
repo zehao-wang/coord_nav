@@ -141,6 +141,8 @@ class ObstacleView(QWidget):
         self.connected = False
         self.goal = None                 # (bx, by) goal B in the base frame, or None
         self.path = None                 # [(bx, by), ...] MPC predicted path, base frame
+        self.tracks = None               # [(bx, by, r, vx, vy), ...] moving tracks (base)
+        self.track_preds = None          # [horizon][(bx, by, r)] CV predictions (+1s, +2s)
         self.points = []                 # /obstacle_points, base-frame [(x, y), ...]
         self.have_points = False         # points present for THIS frame_id?
         self.show_points = False         # draw the point cloud (blue)?
@@ -179,6 +181,16 @@ class ObstacleView(QWidget):
         self.path = path_base
         self.update()
 
+    def set_tracks(self, tracks_base, preds_base):
+        """Tracker overlay: tracks_base = [(bx, by, r, vx, vy), ...] circles the
+        tracker gates as MOVING (velocities in the base frame, m/s);
+        preds_base = [horizon][(bx, by, r)] their constant-velocity predictions
+        (+1 s, +2 s) -- what a time-aware policy's obstacle cost scores against.
+        None/None clears the overlay."""
+        self.tracks = tracks_base
+        self.track_preds = preds_base
+        self.update()
+
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -212,6 +224,32 @@ class ObstacleView(QWidget):
         for (x, y, rad) in self.circles:
             p.drawEllipse(QPointF(cx - y * scale, cy - x * scale),
                           max(2.0, rad * scale), max(2.0, rad * scale))
+
+        # tracker overlay (purple): what the planner believes is MOVING.
+        # Dashed ghosts = constant-velocity predictions (+1 s faint, +2 s
+        # fainter) that a time-aware (_t) policy's obstacle cost scores
+        # against; the arrow = 1 s of the gated velocity estimate.
+        if self.track_preds:
+            for alpha, horizon in zip((110, 55), self.track_preds):
+                p.setPen(QPen(QColor(190, 120, 255, alpha), 1.4, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                for (x, y, rad) in horizon:
+                    p.drawEllipse(QPointF(cx - y * scale, cy - x * scale),
+                                  max(2.0, rad * scale), max(2.0, rad * scale))
+        if self.tracks:
+            p.setPen(QPen(QColor(190, 120, 255), 2))
+            p.setBrush(Qt.NoBrush)
+            for (x, y, rad, vx, vy) in self.tracks:
+                sx, sy = cx - y * scale, cy - x * scale
+                ex, ey = cx - (y + vy) * scale, cy - (x + vx) * scale
+                p.drawLine(QPointF(sx, sy), QPointF(ex, ey))
+                ang = math.atan2(ey - sy, ex - sx)
+                for da in (2.6, -2.6):
+                    p.drawLine(QPointF(ex, ey),
+                               QPointF(ex + 7 * math.cos(ang + da),
+                                       ey + 7 * math.sin(ang + da)))
+                p.drawText(int(sx + 5), int(sy - 5),
+                           "%.2f m/s" % math.hypot(vx, vy))
 
         # MPC predicted path (yellow polyline), base frame; starts at the car
         if self.path:
@@ -670,6 +708,18 @@ class MainWindow(QMainWindow):
         self.view.set_goal(to_base(d["goal"][0], d["goal"][1]))
         traj = d.get("traj")
         self.view.set_path([to_base(pt[0], pt[1]) for pt in traj] if traj else None)
+        tracks = d.get("tracks")
+        if tracks:
+            tb = []
+            for (wx, wy, r, vx, vy) in tracks:
+                bx, by = to_base(wx, wy)
+                # velocity: rotation only (a vector, not a point)
+                tb.append((bx, by, r, c * vx + s * vy, -s * vx + c * vy))
+            pb = [[(*to_base(px_, py_), r_) for (px_, py_, r_) in horizon]
+                  for horizon in (d.get("pred") or [])]
+            self.view.set_tracks(tb, pb or None)
+        else:
+            self.view.set_tracks(None, None)
         act = d.get("action")
         extra = ("act=%s" % ACTION_NAMES.get(act, act)) if act is not None else \
                 ("v=%.2f w=%+.2f" % (d.get("v") or 0.0, d.get("w") or 0.0))
@@ -681,6 +731,7 @@ class MainWindow(QMainWindow):
         self._rec_finish(summary)
         self.view.set_goal(None)
         self.view.set_path(None)
+        self.view.set_tracks(None, None)
         self.policy_status.setText("done: %s (gd=%s)" % (
             summary.get("reason"), summary.get("final_goal_dist")))
         self.log("SEND", "policy DONE %s" % summary)
