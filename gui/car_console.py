@@ -488,6 +488,11 @@ class MainWindow(QMainWindow):
         pf.addRow("B left y (m)", self.goal_y_spin)
         pf.addRow("pose source", self.odom_combo)
         pf.addRow("execute steps", self.exec_steps_spin)
+        # countdown before the car actually moves: time to walk to position for
+        # dynamic-obstacle experiments (0 = immediate). Stop / E-STOP cancels.
+        self.countdown_spin = self._spin(0.0, 15.0, 1.0, 0.0)
+        self.countdown_spin.setDecimals(0)
+        pf.addRow("countdown (s)", self.countdown_spin)
         pf.addRow(self.collision_cb)
         row = QHBoxLayout()
         self.exec_btn = QPushButton("Execute")
@@ -632,6 +637,8 @@ class MainWindow(QMainWindow):
                      % (ACTION_NAMES.get(aid, "?"), aid, mag, dur))
 
     def on_estop(self):
+        if self._cd_cancel():
+            self.log("SEND", "countdown CANCELLED by E-STOP")
         self.log("ERR", "E-STOP! estop.sh -> car-ros will be killed")
         self.client.estop()
 
@@ -659,6 +666,49 @@ class MainWindow(QMainWindow):
     def on_execute(self):
         if getattr(self, "mpc", None) is not None and self.mpc.running():
             return
+        if getattr(self, "_cd_timer", None) is not None:
+            return                                    # countdown already running
+        secs = int(self.countdown_spin.value())
+        if secs <= 0:
+            self._execute_now()
+            return
+        # countdown before motion: walk to position, watch the big number.
+        # Stop (or E-STOP) cancels; the link/health checks run at 0, not now.
+        self._cd_left = secs
+        self.exec_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self._cd_style = self.policy_status.styleSheet()
+        self.policy_status.setStyleSheet(
+            "color:#ffcc44; font-size:28px; font-weight:bold;")
+        self.policy_status.setText("starting in %d ..." % self._cd_left)
+        self.log("SEND", "countdown %d s before EXECUTE" % secs)
+        self._cd_timer = QTimer(self)
+        self._cd_timer.timeout.connect(self._cd_tick)
+        self._cd_timer.start(1000)
+
+    def _cd_tick(self):
+        self._cd_left -= 1
+        if self._cd_left > 0:
+            self.policy_status.setText("starting in %d ..." % self._cd_left)
+            return
+        self._cd_cancel(restore_buttons=False)
+        self._execute_now()
+
+    def _cd_cancel(self, restore_buttons=True):
+        """Tear down a pending countdown (no-op if none)."""
+        if getattr(self, "_cd_timer", None) is None:
+            return False
+        self._cd_timer.stop()
+        self._cd_timer.deleteLater()
+        self._cd_timer = None
+        self.policy_status.setStyleSheet(self._cd_style)
+        if restore_buttons:
+            self.exec_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.policy_status.setText("countdown cancelled")
+        return True
+
+    def _execute_now(self):
         if not self.client.link_ok():
             self.log("ERR", "MCU link not healthy -- not starting policy")
             return
@@ -691,6 +741,9 @@ class MainWindow(QMainWindow):
             self._set_policy_running(False)
 
     def on_stop_policy(self):
+        if self._cd_cancel():
+            self.log("SEND", "countdown CANCELLED")
+            return
         if getattr(self, "mpc", None) is not None:
             self.log("SEND", "STOP policy")
             self.mpc.stop()

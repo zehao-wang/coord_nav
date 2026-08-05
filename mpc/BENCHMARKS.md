@@ -1,4 +1,4 @@
-# MPC benchmark -- fixed eval protocol + tiered set, v1
+# MPC benchmark -- fixed eval protocol + tiered set, v2
 
 **Do not edit numbers by hand** -- update with `python scripts/benchmark_table.py [--policy KEY]`, verify a row with `--check KEY`. Source of truth: `benchmarks.json`. Every current and FUTURE policy is evaluated here, same seeds, same set.
 
@@ -17,9 +17,9 @@ Difficulty tiers (graded by construction, fixed generator seeds):
 
 | policy | L1 | L2 | L3 | L4 | overall | L3+L4 turn(deg) | L3+L4 tail(m) | commit | date |
 |---|---|---|---|---|---|---|---|---|---|
-| `mpc_grid` | 1.000 / 0.000 | 1.000 / 0.000 | 0.820 / 0.180 | 0.865 / 0.135 | 0.895 / 0.105 | 20.8 | 0.191 | 250d5bc | 2026-08-05 |
-| `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 0.970 / 0.030 | 0.990 / 0.010 | 22.0 | 0.163 | 1ca4242 | 2026-08-05 |
-| `mpc_vw` | 0.850 / 0.113 | 0.350 / 0.600 | 0.725 / 0.270 | 0.485 / 0.450 | 0.587 / 0.375 | 6.3 | 0.157 | 250d5bc | 2026-08-05 |
-| `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.915 / 0.030 | 0.770 / 0.185 | 0.745 / 0.207 | 6.4 | 0.122 | 1ca4242 | 2026-08-05 |
+| `mpc_grid` | 1.000 / 0.000 | 1.000 / 0.000 | 0.755 / 0.245 | 0.835 / 0.165 | 0.863 / 0.137 | 21.7 | 0.184 | cd7942a | 2026-08-05 |
+| `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 0.970 / 0.030 | 0.990 / 0.010 | 22.4 | 0.160 | cd7942a | 2026-08-05 |
+| `mpc_vw` | 0.850 / 0.113 | 0.350 / 0.600 | 0.725 / 0.270 | 0.485 / 0.450 | 0.587 / 0.375 | 6.3 | 0.157 | cd7942a | 2026-08-05 |
+| `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.915 / 0.030 | 0.770 / 0.185 | 0.745 / 0.207 | 6.4 | 0.122 | cd7942a | 2026-08-05 |
 
 `turn` = mean direction change between trajectory steps (smoothness, dynamic tiers); `tail` = mean |cross-track| over each episode's last third (return-to-line, dynamic tiers).

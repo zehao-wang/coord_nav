@@ -5,46 +5,46 @@
     "L1_static_open": {
      "collision": 0.0,
      "episodes": 80,
-     "mean_min_clearance": 0.287,
-     "mean_time_s": 8.76,
+     "mean_min_clearance": 0.309,
+     "mean_time_s": 8.85,
      "success": 1.0
     },
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.291,
-     "mean_time_s": 4.19,
+     "mean_min_clearance": 0.281,
+     "mean_time_s": 4.59,
      "success": 1.0
     },
     "L3_dyn_single": {
-     "collision": 0.18,
+     "collision": 0.245,
      "episodes": 200,
-     "mean_min_clearance": 0.475,
+     "mean_min_clearance": 0.474,
      "mean_time_s": 8.77,
-     "mean_turn_deg": 20.3,
-     "success": 0.82,
-     "tail_wander_m": 0.165
+     "mean_turn_deg": 20.6,
+     "success": 0.755,
+     "tail_wander_m": 0.171
     },
     "L4_dyn_complex": {
-     "collision": 0.135,
+     "collision": 0.165,
      "episodes": 200,
-     "mean_min_clearance": 0.252,
-     "mean_time_s": 9.27,
-     "mean_turn_deg": 21.3,
-     "success": 0.865,
-     "tail_wander_m": 0.217
+     "mean_min_clearance": 0.264,
+     "mean_time_s": 9.34,
+     "mean_turn_deg": 22.8,
+     "success": 0.835,
+     "tail_wander_m": 0.198
     },
     "overall": {
-     "collision": 0.105,
+     "collision": 0.1367,
      "episodes": 600,
-     "mean_min_clearance": 0.34,
-     "mean_time_s": 7.91,
-     "success": 0.895
+     "mean_min_clearance": 0.345,
+     "mean_time_s": 8.0,
+     "success": 0.8633
     }
    },
-   "commit": "250d5bc",
+   "commit": "cd7942a",
    "date": "2026-08-05",
-   "protocol": 1,
+   "protocol": 2,
    "seeds": 20
   },
   "mpc_grid_t": {
@@ -52,46 +52,46 @@
     "L1_static_open": {
      "collision": 0.0,
      "episodes": 80,
-     "mean_min_clearance": 0.287,
-     "mean_time_s": 8.76,
+     "mean_min_clearance": 0.309,
+     "mean_time_s": 8.85,
      "success": 1.0
     },
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.291,
-     "mean_time_s": 4.19,
+     "mean_min_clearance": 0.281,
+     "mean_time_s": 4.59,
      "success": 1.0
     },
     "L3_dyn_single": {
      "collision": 0.0,
      "episodes": 200,
-     "mean_min_clearance": 0.523,
-     "mean_time_s": 8.73,
-     "mean_turn_deg": 19.8,
+     "mean_min_clearance": 0.545,
+     "mean_time_s": 8.76,
+     "mean_turn_deg": 20.2,
      "success": 1.0,
-     "tail_wander_m": 0.16
+     "tail_wander_m": 0.149
     },
     "L4_dyn_complex": {
      "collision": 0.03,
      "episodes": 200,
-     "mean_min_clearance": 0.296,
-     "mean_time_s": 9.44,
-     "mean_turn_deg": 24.2,
+     "mean_min_clearance": 0.311,
+     "mean_time_s": 9.59,
+     "mean_turn_deg": 24.5,
      "success": 0.97,
-     "tail_wander_m": 0.165
+     "tail_wander_m": 0.171
     },
     "overall": {
      "collision": 0.01,
      "episodes": 600,
-     "mean_min_clearance": 0.372,
-     "mean_time_s": 8.05,
+     "mean_min_clearance": 0.386,
+     "mean_time_s": 8.2,
      "success": 0.99
     }
    },
-   "commit": "1ca4242",
+   "commit": "cd7942a",
    "date": "2026-08-05",
-   "protocol": 1,
+   "protocol": 2,
    "seeds": 20
   },
   "mpc_vw": {
@@ -136,9 +136,9 @@
      "success": 0.5867
     }
    },
-   "commit": "250d5bc",
+   "commit": "cd7942a",
    "date": "2026-08-05",
-   "protocol": 1,
+   "protocol": 2,
    "seeds": 20
   },
   "mpc_vw_t": {
@@ -183,11 +183,11 @@
      "success": 0.745
     }
    },
-   "commit": "1ca4242",
+   "commit": "cd7942a",
    "date": "2026-08-05",
-   "protocol": 1,
+   "protocol": 2,
    "seeds": 20
   }
  },
- "protocol_version": 1
+ "protocol_version": 2
 }
