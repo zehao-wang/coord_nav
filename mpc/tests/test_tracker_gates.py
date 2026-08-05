@@ -81,6 +81,28 @@ def test_young_boost_pins_fast_mover_acquisition():
     assert speed_off == 0.0                           # fragments without it
 
 
+def test_trust_range_gates_far_tracks_but_bookkeeping_continues():
+    # live-measured: ALL residual phantoms sat at 2.2-3.0 m (sparse, flickery
+    # far returns). Velocities are only TRUSTED within vel_trust_range of the
+    # car -- but bookkeeping runs at range, so a mover ENTERING the zone is
+    # usable the tick it crosses, with no fresh acquisition delay.
+    clk = {"t": 0.0}
+    field = ObstacleField(C.ObstacleConfig(), lambda: clk["t"])
+    x = 2.9                                    # approaching mover, car at origin
+    for k in range(8):
+        field.update([(x, 0.0, 0.12)], (0, 0, 0))
+        v = field.velocities()
+        if x > C.ObstacleConfig().vel_trust_range:
+            assert not np.any(v)               # far: silenced
+        clk["t"] += TICK
+        x -= 0.3 * TICK
+    # now inside the trust zone: immediately trusted at the right speed
+    assert x < C.ObstacleConfig().vel_trust_range
+    field.update([(x, 0.0, 0.12)], (0, 0, 0))
+    v = field.velocities()
+    assert np.hypot(v[0, 0], v[0, 1]) == pytest.approx(0.3, abs=0.05)
+
+
 def test_observation_jump_closes_the_gate_instead_of_lying():
     # REAL clustering can make an obstacle's centroid JUMP (leg-split, cluster
     # merge). The required behaviour: a jump must never emit a WRONG gated

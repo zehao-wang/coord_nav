@@ -293,6 +293,15 @@ class ObstacleConfig:
     assoc_young_boost: float = 0.07   # extra match radius (m) for tracks with <3
                                       # sightings: a 0.45 m/s mover's first re-sighting
                                       # lands beyond merge_dist and fragmented forever
+    vel_trust_range: float = 2.2      # m: velocities are only TRUSTED for tracks this
+                                      # close to the car. The 2026-08-05 no-human live
+                                      # capture (new perception) had ALL residual phantom
+                                      # events at 2.2-3.0 m -- beam spacing ~5 cm and
+                                      # flickery returns at range make far centroids
+                                      # jitter beyond what the gates were tuned for.
+                                      # BOOKKEEPING is unrestricted: sightings/velocity
+                                      # accumulate at range, so a mover entering the
+                                      # trust zone is usable immediately.
     pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
                                       # beyond ~2.5 s a constant-velocity guess is fiction
                                       # (bounces, stops), so the prediction holds there.

@@ -58,6 +58,7 @@ class ObstacleField(object):
         self.cfg = cfg
         self._clock = wall_clock
         self._mem = np.zeros((0, NCOLS), dtype=float)
+        self._car_xy = None               # last update() pose, for the trust-range gate
 
     @staticmethod
     def _rows(fresh, now):
@@ -126,6 +127,13 @@ class ObstacleField(object):
                 (coher >= self.cfg.vel_coherence) &
                 (iso >= self.cfg.vel_isolation) &
                 (disp_rate >= min_rate))
+        if self._car_xy is not None:
+            # trust-range gate: far lidar centroids jitter beyond what the
+            # other gates were tuned for (live-measured: all residual phantoms
+            # at 2.2-3.0 m). Bookkeeping continues at range; only OUTPUT is
+            # gated, so a mover entering the zone is usable immediately.
+            dcar = np.hypot(m[:, X] - self._car_xy[0], m[:, Y] - self._car_xy[1])
+            gate &= dcar <= self.cfg.vel_trust_range
         v[~gate] = 0.0
         return v
 
@@ -135,6 +143,7 @@ class ObstacleField(object):
         circles as (N, 3)."""
         now = self._clock()
         fresh = base_to_odom(circles_base, pose)          # (N, 3)
+        self._car_xy = (float(pose[0]), float(pose[1]))
 
         if self.cfg.mem_time_s <= 0.0:
             # current-frame-only: no cross-frame association, so no velocities
