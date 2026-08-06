@@ -76,8 +76,8 @@
      "collision": 0.035,
      "episodes": 200,
      "mean_min_clearance": 0.32,
-     "mean_time_s": 9.59,
-     "mean_turn_deg": 24.6,
+     "mean_time_s": 9.55,
+     "mean_turn_deg": 24.4,
      "success": 0.965,
      "tail_wander_m": 0.171
     },
@@ -85,12 +85,12 @@
      "collision": 0.0117,
      "episodes": 600,
      "mean_min_clearance": 0.388,
-     "mean_time_s": 8.2,
+     "mean_time_s": 8.18,
      "success": 0.9883
     }
    },
-   "commit": "8d7f297",
-   "date": "2026-08-05",
+   "commit": "baaae76",
+   "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
   },
@@ -167,24 +167,24 @@
      "tail_wander_m": 0.101
     },
     "L4_dyn_complex": {
-     "collision": 0.125,
+     "collision": 0.13,
      "episodes": 200,
      "mean_min_clearance": 0.265,
-     "mean_time_s": 11.5,
+     "mean_time_s": 11.6,
      "mean_turn_deg": 7.0,
      "success": 0.835,
-     "tail_wander_m": 0.137
+     "tail_wander_m": 0.135
     },
     "overall": {
-     "collision": 0.1967,
+     "collision": 0.1983,
      "episodes": 600,
      "mean_min_clearance": 0.304,
-     "mean_time_s": 10.49,
+     "mean_time_s": 10.53,
      "success": 0.7583
     }
    },
-   "commit": "8d7f297",
-   "date": "2026-08-05",
+   "commit": "baaae76",
+   "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
   },
@@ -217,20 +217,20 @@
      "collision": 0.05,
      "episodes": 200,
      "mean_min_clearance": 0.341,
-     "mean_time_s": 10.2,
-     "mean_turn_deg": 22.0,
+     "mean_time_s": 10.19,
+     "mean_turn_deg": 21.9,
      "success": 0.915,
-     "tail_wander_m": 0.203
+     "tail_wander_m": 0.202
     },
     "overall": {
      "collision": 0.0167,
      "episodes": 600,
-     "mean_min_clearance": 0.46,
+     "mean_min_clearance": 0.459,
      "mean_time_s": 8.93,
      "success": 0.7667
     }
    },
-   "commit": "0077188",
+   "commit": "baaae76",
    "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
