@@ -126,4 +126,15 @@ def _orca_build(magnitude, goal_x, goal_y=0.0, step_duration=0.5,
     return ORCAPolicy(cfg), cfg
 
 
+def _orca_vw_build(magnitude, goal_x, goal_y=0.0, step_duration=0.5,
+                   allow_rotation=False):
+    from .orca_policy import ORCAVWPolicy
+    cfg = config.build_live_cfg(1, magnitude, goal_x, goal_y=goal_y,
+                                step_duration=step_duration)
+    return ORCAVWPolicy(cfg), cfg
+
+
+# The ORCA pair mirrors the MPC pair's action spaces (mpc_grid / mpc_vw), so
+# every action-space comparison on the board has a reactive counterpart.
 register("orca", "ORCA / RVO2 (reactive crowd baseline)", "discrete", _orca_build)
+register("orca_vw", "ORCA / RVO2 (v,omega tracking)", "velocity", _orca_vw_build)

@@ -63,3 +63,38 @@ def test_completes_an_open_course_and_field_case():
     case = [c for c in TF.archetype_cases() if c.name == "cross_fast"][0]
     res = TF.run_case("orca", case, seed=0)
     assert res.steps > 3
+
+
+def test_static_wall_head_on_slides_around_not_freezes():
+    # THE static-channel pin: a wall dead on the A->B line. As zero-velocity
+    # AGENTS this froze forever (one hop then 70+ zero-displacement ticks --
+    # the textbook freezing robot); through RVO2's native line-obstacle
+    # channel (+ the sticky Blocks.cpp perturbation) the head-on approach
+    # resolves to sliding around the wall. Regressing EITHER piece (obstacle
+    # channel, minimum-magnitude sticky bias) fails this.
+    w = World([(0.40, 0.00, 0.11), (0.62, 0.00, 0.11)], (0, 0, 0), "wall_inline")
+    r = run_policy("orca", [w], goal_dist=1.0, seed=0, disturbed=True)[0]
+    assert r.reached and not r.collided
+
+
+def test_orca_vw_builds_and_completes_open_course():
+    # the (v,w) variant mirrors mpc_vw's action space: builds through the
+    # registry with the matching space and drives an open course to B
+    policy, cfg = build_policy("orca_vw", 40.0, 3.0)
+    assert policy.action_space == "velocity"
+    w = World([(1.4, 0.4, 0.14)], (0, 0, 0), "open")
+    r = run_policy("orca_vw", [w], goal_dist=3.0, seed=0, disturbed=True)[0]
+    assert r.reached and not r.collided
+
+
+def test_orca_is_deterministic_under_the_episode_seed():
+    # the sticky vpref perturbation must be driven by the seeded rng ONLY --
+    # the fixed benchmark protocol's --check regression detection depends on
+    # same-seed bit-identical trajectories
+    w = World([(0.40, 0.00, 0.11), (0.62, 0.00, 0.11)], (0, 0, 0), "wall_inline")
+    a = run_policy("orca", [w], goal_dist=1.0, seed=3, disturbed=True)[0]
+    b = run_policy("orca", [w], goal_dist=1.0, seed=3, disturbed=True)[0]
+    c = run_policy("orca", [w], goal_dist=1.0, seed=4, disturbed=True)[0]
+    ta, tb, tc = (np.asarray(x.traj) for x in (a, b, c))
+    assert ta.shape == tb.shape and np.allclose(ta, tb)
+    assert ta.shape != tc.shape or not np.allclose(ta, tc)

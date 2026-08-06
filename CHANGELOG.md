@@ -3,7 +3,43 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
-## 0.9.25 - 2026-08-06 - the hybrid graft ships: Hungarian association + graveyard re-ID
+## 0.9.26 - 2026-08-06 - ORCA learns to live with statics: the obstacle channel + the vw twin
+
+The user's requirement was blunt and correct: real crossing scenes are
+static+moving MIXED, the baseline must work on ALL benchmark tiers, and it
+must exist in BOTH MPC action spaces. Feeding statics as zero-velocity agents
+(the crowd-nav-sim convention, faithful to a protocol that has no statics at
+all) was the implementation problem: it billed walls for half the avoidance
+(reciprocity), let the infeasible fallback relax wall constraints, dropped the
+slide-along-feasibility guarantee, and let wall chunks evict actual movers
+from the MAX_NEIGHBORS budget.
+
+Rework: statics (gated velocity == 0) now go through RVO2's NATIVE line-
+obstacle channel as CCW circumscribed octagons (CCW=solid verified
+empirically); movers stay reciprocal agents. Plus `orca_vw`, the (v,omega)
+twin of mpc_vw: same RVO2 solve, tracked by a forward-only unicycle with
+deliverable-yaw clipping (Variant1's own limit formula); when ORCA's velocity
+points behind the nose it yields outright -- a roll floor there executed
+velocities OUTSIDE the certified half-planes, measured as head-on collisions.
+
+Two probe-driven fixes along the way: the Blocks.cpp symmetry-breaking vpref
+perturbation is sampled ONCE per episode (per-tick zero-mean draws are a
+random walk -- the head-on stall re-centres; measured dead_ahead timeouts)
+with a GUARANTEED minimum magnitude (a near-zero sticky draw slides slower
+than STOP_SPEED and reads as a permanent yield: wall_inline went 4/5 -> 0/5
+before the floor, 5/5 after); and the discrete speed-following inverts each
+direction's OWN affine plant (diag/strafe dispatch multipliers -- the straight
+-hop inversion overspeeded 4 of 8 directions exactly in the creep regime).
+
+Static suite (6 worlds x 5 seeds, disturbed): orca 20->23/30 reached with 0
+collisions (was: freeze/timeout as agents; the misses are slalom -- reactive
+one-step LP does not chain go-arounds, that gap is ORCA's identity, not a
+bug). wall_inline head-on: reached, sliding around -- the scene that froze
+forever now completes. vw parity: orca_vw 10/30 vs mpc_vw 9/30 on the same
+tight worlds (8 vs 19 collisions) -- the vw failures are the forward-only
+kinematics (min turn radius ~0.30 m vs 0.29 m wall clearance), not the port.
+45 tests (4 new pins: obstacle-channel slide, vw open course, seed
+determinism, registry contract).
 
 The follow-through on 0.9.24's parked KF: graft ONLY the estimator-agnostic
 structural pieces onto the production tracker, leaving the tuned estimator and
