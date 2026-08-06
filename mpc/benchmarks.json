@@ -193,44 +193,91 @@
     "L1_static_open": {
      "collision": 0.0,
      "episodes": 80,
-     "mean_min_clearance": 0.459,
-     "mean_time_s": 14.61,
-     "success": 0.4875
+     "mean_min_clearance": 0.296,
+     "mean_time_s": 11.75,
+     "success": 0.525
     },
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.344,
-     "mean_time_s": 4.81,
-     "success": 0.3333
+     "mean_min_clearance": 0.254,
+     "mean_time_s": 5.84,
+     "success": 0.7417
     },
     "L3_dyn_single": {
      "collision": 0.0,
      "episodes": 200,
      "mean_min_clearance": 0.641,
-     "mean_time_s": 10.15,
-     "mean_turn_deg": 11.2,
+     "mean_time_s": 9.57,
+     "mean_turn_deg": 10.8,
      "success": 1.0,
-     "tail_wander_m": 0.099
+     "tail_wander_m": 0.136
     },
     "L4_dyn_complex": {
-     "collision": 0.045,
+     "collision": 0.12,
      "episodes": 200,
-     "mean_min_clearance": 0.387,
-     "mean_time_s": 15.72,
-     "mean_turn_deg": 11.3,
-     "success": 0.89,
-     "tail_wander_m": 0.283
+     "mean_min_clearance": 0.302,
+     "mean_time_s": 12.69,
+     "mean_turn_deg": 12.9,
+     "success": 0.85,
+     "tail_wander_m": 0.193
     },
     "overall": {
-     "collision": 0.015,
+     "collision": 0.04,
      "episodes": 600,
-     "mean_min_clearance": 0.477,
-     "mean_time_s": 12.23,
-     "success": 0.7617
+     "mean_min_clearance": 0.41,
+     "mean_time_s": 10.15,
+     "success": 0.835
     }
    },
-   "commit": "c02e8df",
+   "commit": "755bf3a",
+   "date": "2026-08-06",
+   "protocol": 2,
+   "seeds": 20
+  },
+  "orca_vw": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.0625,
+     "episodes": 80,
+     "mean_min_clearance": 0.253,
+     "mean_time_s": 14.18,
+     "success": 0.4
+    },
+    "L2_static_tight": {
+     "collision": 0.2583,
+     "episodes": 120,
+     "mean_min_clearance": 0.187,
+     "mean_time_s": 4.97,
+     "success": 0.3333
+    },
+    "L3_dyn_single": {
+     "collision": 0.075,
+     "episodes": 200,
+     "mean_min_clearance": 0.561,
+     "mean_time_s": 10.83,
+     "mean_turn_deg": 4.5,
+     "success": 0.885,
+     "tail_wander_m": 0.145
+    },
+    "L4_dyn_complex": {
+     "collision": 0.25,
+     "episodes": 200,
+     "mean_min_clearance": 0.272,
+     "mean_time_s": 13.65,
+     "mean_turn_deg": 4.8,
+     "success": 0.595,
+     "tail_wander_m": 0.174
+    },
+    "overall": {
+     "collision": 0.1683,
+     "episodes": 600,
+     "mean_min_clearance": 0.355,
+     "mean_time_s": 11.4,
+     "success": 0.6133
+    }
+   },
+   "commit": "755bf3a",
    "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
