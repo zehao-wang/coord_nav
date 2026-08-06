@@ -38,8 +38,17 @@ bug). wall_inline head-on: reached, sliding around -- the scene that froze
 forever now completes. vw parity: orca_vw 10/30 vs mpc_vw 9/30 on the same
 tight worlds (8 vs 19 collisions) -- the vw failures are the forward-only
 kinematics (min turn radius ~0.30 m vs 0.29 m wall clearance), not the port.
-45 tests (4 new pins: obstacle-channel slide, vw open course, seed
-determinism, registry contract).
+
+First full-protocol run then flagged one more relocation of the overspeed
+bug: with the STOP threshold at 0.02, requests in [0.02, 0.05] hit the stall
+floor and executed at 0.055 -- 2x+ ORCA's ask exactly where it was being
+careful, L4 collisions 0.045 -> 0.120. Rule now: a hop whose stall floor
+exceeds 2x the requested speed yields instead (execute-close-to-certified-
+or-yield). The remaining L4 collision mass is occluded_oncoming pop-outs --
+the canonical reactive blind spot (no prediction through occlusion; the
+time-aware MPC row is the one that solves it, by design).
+44 tests (3 new pins: obstacle-channel slide + registry contract, vw open
+course, seed determinism).
 
 The follow-through on 0.9.24's parked KF: graft ONLY the estimator-agnostic
 structural pieces onto the production tracker, leaving the tuned estimator and

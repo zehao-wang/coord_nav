@@ -88,11 +88,12 @@ class _ORCABase(Policy):
     TIME_HORIZON_OBST = 2.5     # s, agent-obstacle lookahead
     STOP_SPEED = 0.02           # below this ORCA is yielding: emit STOP
     PERTURB_ANGLE = 0.12        # rad; Blocks.cpp-style deadlock breaking
-    PERTURB_MIN_FRAC = 0.6      # |angle| >= this fraction of PERTURB_ANGLE: the
+    PERTURB_MIN_FRAC = 0.75     # |angle| >= this fraction of PERTURB_ANGLE: the
                                 # tangential slide it seeds (speed x sin) must
-                                # clear STOP_SPEED, or a head-on stall reads as
-                                # a yield forever (a near-zero sticky draw did
-                                # exactly that: wall_inline 4/5 -> 0/5)
+                                # clear every yield threshold below, or a
+                                # head-on stall reads as a yield forever (a
+                                # near-zero sticky draw did exactly that:
+                                # wall_inline 4/5 -> 0/5)
     PERTURB_FRAC = 0.02         # fractional speed jitter, same purpose
 
     def __init__(self, cfg, speed):
@@ -212,17 +213,27 @@ class ORCAPolicy(_ORCABase):
         else:
             k = int(np.argmax(self._dirs @ (np.array([bx, by]) / sp)))
             aid = int(self.ids[k])
-            # execute ORCA's chosen SPEED, not just its direction: near
-            # obstacles it deliberately creeps (measured 0.15 m/s raw against
-            # a fixed 0.41 m/s full-magnitude snap -- a 3x overspeed that
-            # negated its caution and showed up as L4 collisions). Inverted
-            # through the chosen direction's OWN affine plant (diag/strafe
-            # dispatch multipliers included), floored where its wheels stall.
-            mag = self._m_lo[k] + (sp - self._n_lo[k]) / self._slope[k]
-            mag = float(np.clip(mag, self._m_lo[k], self.cfg.step_magnitude))
-            exec_speed = self._n_lo[k] + self._slope[k] * (mag - self._m_lo[k])
-            body = np.array([self._dirs[k, 0] * exec_speed,
-                             self._dirs[k, 1] * exec_speed, 0.0])
+            if sp < 0.5 * self._n_lo[k]:
+                # the direction's stall floor would execute > 2x ORCA's
+                # request -- the same overspeed-negates-caution mechanism as
+                # the full-magnitude snap, just relocated to the creep regime
+                # (measured as L4 collisions when the floor executed 0.02-0.03
+                # requests at 0.055). Better to yield a tick and re-solve.
+                aid, mag = 0, self.cfg.step_magnitude
+                body = np.zeros(3)
+            else:
+                # execute ORCA's chosen SPEED, not just its direction: near
+                # obstacles it deliberately creeps (measured 0.15 m/s raw
+                # against a fixed 0.41 m/s full-magnitude snap -- a 3x
+                # overspeed that negated its caution and showed up as L4
+                # collisions). Inverted through the chosen direction's OWN
+                # affine plant (diag/strafe dispatch multipliers included),
+                # floored where its wheels stall.
+                mag = self._m_lo[k] + (sp - self._n_lo[k]) / self._slope[k]
+                mag = float(np.clip(mag, self._m_lo[k], self.cfg.step_magnitude))
+                exec_speed = self._n_lo[k] + self._slope[k] * (mag - self._m_lo[k])
+                body = np.array([self._dirs[k, 0] * exec_speed,
+                                 self._dirs[k, 1] * exec_speed, 0.0])
         # short straight extrapolation of the chosen hop, for the GUI overlay
         tick = self._tick()
         steps = np.arange(1, 5) * tick
