@@ -91,15 +91,25 @@ class ORCAPolicy(Policy):
         c, s = np.cos(-pose[2]), np.sin(-pose[2])
         bx, by = c * vx - s * vy, s * vx + c * vy
         sp = float(np.hypot(bx, by))
-        mag, dur = self.cfg.step_magnitude, self.cfg.step_duration
+        dur = self.cfg.step_duration
         if sp < self.STOP_SPEED:
-            aid = 0                                          # ORCA yields: STOP
+            aid, mag = 0, self.cfg.step_magnitude            # ORCA yields: STOP
             body = np.zeros(3)
         else:
             k = int(np.argmax(self._dirs @ (np.array([bx, by]) / sp)))
             aid = int(self.ids[k])
-            body = np.array([self._dirs[k, 0] * self._speed,
-                             self._dirs[k, 1] * self._speed, 0.0])
+            # execute ORCA's chosen SPEED, not just its direction: near
+            # obstacles it deliberately creeps (measured 0.15 m/s raw against
+            # a fixed 0.41 m/s full-magnitude snap -- a 3x overspeed that
+            # negated its caution and showed up as L4 collisions). The affine
+            # plant maps speed back to magnitude; floored where wheels stall.
+            frac = min(1.0, sp / self._speed)
+            off = self.cfg.robot.pwm_offset
+            mag = off + frac * (self.cfg.step_magnitude - off)
+            mag = float(max(off + 4.0, min(self.cfg.step_magnitude, mag)))
+            exec_speed = frac * self._speed
+            body = np.array([self._dirs[k, 0] * exec_speed,
+                             self._dirs[k, 1] * exec_speed, 0.0])
         # short straight extrapolation of the chosen hop, for the GUI overlay
         steps = np.arange(1, 5) * tick
         cb, sb = np.cos(pose[2]), np.sin(pose[2])
