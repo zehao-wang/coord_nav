@@ -193,44 +193,44 @@
     "L1_static_open": {
      "collision": 0.0,
      "episodes": 80,
-     "mean_min_clearance": 0.296,
-     "mean_time_s": 11.75,
-     "success": 0.525
+     "mean_min_clearance": 0.3,
+     "mean_time_s": 11.49,
+     "success": 0.575
     },
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
-     "mean_min_clearance": 0.254,
-     "mean_time_s": 5.84,
-     "success": 0.7417
+     "mean_min_clearance": 0.244,
+     "mean_time_s": 5.68,
+     "success": 0.8333
     },
     "L3_dyn_single": {
      "collision": 0.0,
      "episodes": 200,
      "mean_min_clearance": 0.641,
      "mean_time_s": 9.57,
-     "mean_turn_deg": 10.8,
+     "mean_turn_deg": 10.7,
      "success": 1.0,
      "tail_wander_m": 0.136
     },
     "L4_dyn_complex": {
-     "collision": 0.12,
+     "collision": 0.11,
      "episodes": 200,
-     "mean_min_clearance": 0.302,
-     "mean_time_s": 12.69,
-     "mean_turn_deg": 12.9,
+     "mean_min_clearance": 0.299,
+     "mean_time_s": 12.49,
+     "mean_turn_deg": 13.2,
      "success": 0.85,
-     "tail_wander_m": 0.193
+     "tail_wander_m": 0.182
     },
     "overall": {
-     "collision": 0.04,
+     "collision": 0.0367,
      "episodes": 600,
-     "mean_min_clearance": 0.41,
-     "mean_time_s": 10.15,
-     "success": 0.835
+     "mean_min_clearance": 0.407,
+     "mean_time_s": 9.95,
+     "success": 0.86
     }
    },
-   "commit": "755bf3a",
+   "commit": "506fbe9",
    "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
@@ -238,18 +238,18 @@
   "orca_vw": {
    "cells": {
     "L1_static_open": {
-     "collision": 0.0625,
+     "collision": 0.0875,
      "episodes": 80,
-     "mean_min_clearance": 0.253,
-     "mean_time_s": 14.18,
-     "success": 0.4
+     "mean_min_clearance": 0.252,
+     "mean_time_s": 14.42,
+     "success": 0.4625
     },
     "L2_static_tight": {
-     "collision": 0.2583,
+     "collision": 0.1917,
      "episodes": 120,
-     "mean_min_clearance": 0.187,
-     "mean_time_s": 4.97,
-     "success": 0.3333
+     "mean_min_clearance": 0.193,
+     "mean_time_s": 5.06,
+     "success": 0.3417
     },
     "L3_dyn_single": {
      "collision": 0.075,
@@ -261,23 +261,23 @@
      "tail_wander_m": 0.145
     },
     "L4_dyn_complex": {
-     "collision": 0.25,
+     "collision": 0.275,
      "episodes": 200,
-     "mean_min_clearance": 0.272,
-     "mean_time_s": 13.65,
+     "mean_min_clearance": 0.271,
+     "mean_time_s": 13.57,
      "mean_turn_deg": 4.8,
-     "success": 0.595,
-     "tail_wander_m": 0.174
+     "success": 0.605,
+     "tail_wander_m": 0.179
     },
     "overall": {
-     "collision": 0.1683,
+     "collision": 0.1667,
      "episodes": 600,
      "mean_min_clearance": 0.355,
-     "mean_time_s": 11.4,
-     "success": 0.6133
+     "mean_time_s": 11.44,
+     "success": 0.6267
     }
    },
-   "commit": "755bf3a",
+   "commit": "506fbe9",
    "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20
