@@ -3,6 +3,34 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.23 - 2026-08-06 - ORCA/RVO2 joins the board (the literature's reactive crowd baseline)
+
+Context: the user asked about Human2Nav (ICRA 2026, crowd navigation from
+human videos via feasibility-guided flow matching) as a baseline. NOT open
+source as of today: only a project page exists (iunone.github.io/human2nav);
+its "Code" button is an unedited template placeholder pointing at the
+unrelated LeCAR-Lab/ASAP repo; no arXiv, no weights. Recorded for periodic
+re-checking. Its classical baselines, however, are open: ORCA is now plugged
+in; SARL (CrowdNav, MIT) fits the interface too but ships no weights -- it
+needs a training run before it means anything (backlog).
+
+mpc_baseline/orca_policy.py + registry key `orca`: one fresh RVO2 sim per
+tick; robot = agent aiming at B, every remembered circle = an agent carrying
+the tracker's gated velocity (statics/walls are zero-velocity agents) -- the
+tracker work is precisely the sensing layer ORCA always assumed someone else
+would provide. The collision-free holonomic output snaps to the nearest of
+the 8 mecanum translation actions (same table the actuator runs), STOP when
+ORCA yields. Deterministic; seeding is a no-op by design.
+
+Dependency: Python-RVO2 built from source (cython<3, and cmake>=4 needs
+CMAKE_POLICY_VERSION_MINIMUM=3.5 -- both bites documented here so the next
+install takes minutes, not archaeology). Not in pyproject (no sdist on PyPI);
+the registry imports it lazily so everything else works without it.
+
+Honest expectations, borne out by the board: reactive-only with reciprocity
+assumptions -- strong against movers, weak in static pockets/narrow passages.
+The tiered table exists exactly to show such profiles honestly.
+
 ## 0.9.22 - 2026-08-05 - LIVE SESSION: v2 goes long-horizon sampled, the radius ratchet, and the dynamic A/B lands
 
 A full on-car day. Every failure yielded a committed root cause; the session

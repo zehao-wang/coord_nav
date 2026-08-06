@@ -114,3 +114,16 @@ register("mpc_grid_t", "MPC grid + CV prediction (variant 2t)", "discrete",
          _mpc_build(2, predict=True))
 register("mpc_vw_t", "MPC v,omega + CV prediction (variant 1t)", "velocity",
          _mpc_build(1, predict=True))
+
+
+def _orca_build(magnitude, goal_x, goal_y=0.0, step_duration=0.5,
+                allow_rotation=False):
+    # imported lazily so mpc_baseline works without the rvo2 bindings unless
+    # the ORCA baseline is actually built
+    from .orca_policy import ORCAPolicy
+    cfg = config.build_live_cfg(2, magnitude, goal_x, goal_y=goal_y,
+                                step_duration=step_duration)
+    return ORCAPolicy(cfg), cfg
+
+
+register("orca", "ORCA / RVO2 (reactive crowd baseline)", "discrete", _orca_build)

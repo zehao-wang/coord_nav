@@ -187,6 +187,53 @@
    "date": "2026-08-05",
    "protocol": 2,
    "seeds": 20
+  },
+  "orca": {
+   "cells": {
+    "L1_static_open": {
+     "collision": 0.0,
+     "episodes": 80,
+     "mean_min_clearance": 0.433,
+     "mean_time_s": 8.94,
+     "success": 0.4625
+    },
+    "L2_static_tight": {
+     "collision": 0.0,
+     "episodes": 120,
+     "mean_min_clearance": 0.344,
+     "mean_time_s": 4.08,
+     "success": 0.3333
+    },
+    "L3_dyn_single": {
+     "collision": 0.0,
+     "episodes": 200,
+     "mean_min_clearance": 0.646,
+     "mean_time_s": 8.74,
+     "mean_turn_deg": 11.6,
+     "success": 1.0,
+     "tail_wander_m": 0.133
+    },
+    "L4_dyn_complex": {
+     "collision": 0.05,
+     "episodes": 200,
+     "mean_min_clearance": 0.341,
+     "mean_time_s": 10.2,
+     "mean_turn_deg": 22.0,
+     "success": 0.915,
+     "tail_wander_m": 0.203
+    },
+    "overall": {
+     "collision": 0.0167,
+     "episodes": 600,
+     "mean_min_clearance": 0.46,
+     "mean_time_s": 8.93,
+     "success": 0.7667
+    }
+   },
+   "commit": "cdb96bd+dirty",
+   "date": "2026-08-06",
+   "protocol": 2,
+   "seeds": 20
   }
  },
  "protocol_version": 2
