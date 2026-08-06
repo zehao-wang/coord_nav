@@ -277,51 +277,44 @@ class ObstacleConfig:
                                       # information is strictly better for avoidance)
     merge_dist: float = 0.15          # fuse remembered circles closer than this (m)
     max_age_stale: float = 1.0        # ignore an /obstacles frame older than this (s)
-    # Constant-velocity tracking (used by the *_t time-aware policies; pure
-    # bookkeeping for everything else). Gates are what keep a STATIC world
-    # byte-identical to the frozen-world planner: a track's velocity reads 0
-    # until it has been sighted vel_min_sightings times AND its EMA speed clears
-    # vel_deadband.
-    vel_ema: float = 0.5              # EMA weight on each new raw velocity sample
-    vel_cap: float = 1.0              # m/s clamp: a bad association can't invent a sprinter
-    vel_min_sightings: int = 5        # frames a track must be seen before its v counts
-                                      # (was 3; raised by the real-frame screening below)
+    # --- SORT-style tracker (0.9.24: per-track CV Kalman + Mahalanobis-gated
+    # Hungarian + birth/death/re-ID; replaced the EMA + statistical-gate
+    # battery). The KF supplies smoothed positions and a velocity WITH its own
+    # covariance, so "is it really moving?" becomes a chi-square significance
+    # test instead of hand-tuned coherence/displacement heuristics. SENSOR
+    # gates survive below -- they encode measured lidar pathologies the filter
+    # cannot know about.
+    kf_meas_std: float = 0.03         # m, centroid measurement noise (measured calm-track
+                                      # jitter p50/sqrt2 = 0.013, rounded up for margin)
+    kf_accel_std: float = 0.2         # m/s^2 white-noise acceleration. Harness-tuned
+                                      # (0.9.24): larger values keep velocity variance so
+                                      # high that a 0.3 m/s walker never reaches chi-square
+                                      # significance
+    kf_init_vel_std: float = 0.6      # m/s prior std on a NEW track's velocity: wide, so
+                                      # a fast mover's first re-sighting still associates
+                                      # (the principled replacement for assoc_young_boost)
+    assoc_chi2: float = 9.21          # Mahalanobis^2 gate for association (chi2_2 @ .99)
+    assoc_abs_gate: float = 0.5       # m, absolute association sanity gate
+    reid_time_s: float = 1.0          # a freshly dead track lingers this long for re-ID
+    reid_dist: float = 0.4            # m, match radius against a dead track's coasted pos
+    vel_min_hits: int = 3             # measurements before a velocity may be trusted
+    vel_sig_chi2: float = 9.21        # v' P_v^-1 v ENTRY significance to call a track MOVING
+    sig_low_ticks: int = 6            # max consecutive sub-ENTRY ticks a moving track may
+                                      # bridge before re-qualifying (caps phantom lingering)
+    vel_sig_exit: float = 3.0         # hysteresis EXIT threshold: once moving, a track
+                                      # stays trusted down to here (real dropout inflates
+                                      # P_v while coasting; a single threshold flapped)
+    vel_cap: float = 1.0              # m/s output clamp: no phantom sprinters
     vel_deadband: float = 0.04        # m/s below which a track is "static"
-    # --- REAL-PERCEPTION gates (2026-08-05, tuned on 220 recorded on-car ticks
-    # + noise-matched injected movers; see scripts/tracker_eval.py). The
-    # original sightings+deadband gates leaked phantom velocities on 95% of
-    # real ticks (wall-cluster centroid slide + association churn, phantom p90
-    # 0.245 m/s -- overlapping pedestrian speed, a deadband cannot separate).
-    # These target the mechanisms and cut phantom events 97.7% while still
-    # acquiring 0.25-0.35 m/s movers in ~2 s:
-    vel_coherence: float = 0.90       # |sum(raw samples)|/sum|samples| (decayed):
-                                      # churn flips direction, a mover doesn't
-    vel_coher_decay: float = 0.7      # per-sighting decay of those sums
-    vel_isolation: float = 0.35       # m to the nearest other track: walls come in
-                                      # CHAINS of clusters, a mover crosses open floor
-    vel_min_disp: float = 0.15        # m net displacement of raw obs within the window:
-                                      # slide wanders, a mover goes somewhere
-    vel_disp_window: float = 1.5      # s (ping-pong anchors -> effective window
-                                      # [0.75, 1.5] s)
-    assoc_young_boost: float = 0.07   # extra match radius (m) for tracks with <3
-                                      # sightings: a 0.45 m/s mover's first re-sighting
-                                      # lands beyond merge_dist and fragmented forever
-    vel_trust_range: float = 2.2      # m: NORMAL-gate trust zone. The 2026-08-05 no-human
-                                      # live capture had ALL residual phantom events at
-                                      # 2.2-3.0 m (beam spacing ~5 cm + flickery far
-                                      # returns jitter centroids). BOOKKEEPING is
-                                      # unrestricted at any range.
-    # --- TIERED admission (2026-08-05 latency pass; harness-tuned on three real
-    # captures + noise-matched injected movers: +1 false event in 7823
-    # velocity-bearing track-ticks bought near-cross acquisition 2.2->1.3 s and
-    # far-approach 2.7->1.0 s):
-    vel_far_range: float = 2.8        # m: between trust_range and this, velocities pass
-                                      # only with n>=vel_min_sightings AND the STRICT set
-    vel_early_sightings: int = 3      # within trust_range, a track this young is trusted
-                                      # if it passes the STRICT set (1.0 s floor vs 1.7 s)
-    vel_strict_coherence: float = 0.95
-    vel_strict_isolation: float = 0.5
-    vel_strict_rate_mult: float = 1.5 # strict disp-rate = this x the normal minimum
+    # sensor gates (measured on recorded car data, unchanged rationale):
+    vel_isolation: float = 0.35       # m to nearest other track: walls come in CHAINS of
+                                      # clusters and split objects become adjacent tracks
+    vel_trust_range: float = 2.2      # m NORMAL trust zone (all residual live phantoms
+                                      # sat at 2.2-3.0 m -- far centroids jitter)
+    vel_far_range: float = 2.8        # m: between the two, only mature + highly
+                                      # significant tracks are trusted:
+    far_hits_extra: int = 2           #   vel_min_hits + this many measurements
+    far_sig_mult: float = 2.0         #   and this x vel_sig_chi2 significance
     pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
                                       # beyond ~2.5 s a constant-velocity guess is fiction
                                       # (bounces, stops), so the prediction holds there.
