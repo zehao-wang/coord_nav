@@ -322,6 +322,10 @@ class ObstacleConfig:
     vel_strict_coherence: float = 0.95
     vel_strict_isolation: float = 0.5
     vel_strict_rate_mult: float = 1.5 # strict disp-rate = this x the normal minimum
+    reid_time_s: float = 1.0          # a freshly dead track lingers this long for
+                                      # re-identification (occlusion > mem_time_s used
+                                      # to reset a mature track to a stranger)
+    reid_dist: float = 0.4            # m, match radius vs a dead track's coasted position
     pred_cap_s: float = 2.5           # cap on TOTAL extrapolation (age + horizon step):
                                       # beyond ~2.5 s a constant-velocity guess is fiction
                                       # (bounces, stops), so the prediction holds there.

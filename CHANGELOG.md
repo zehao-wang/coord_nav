@@ -3,6 +3,26 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.25 - 2026-08-06 - the hybrid graft ships: Hungarian association + graveyard re-ID
+
+The follow-through on 0.9.24's parked KF: graft ONLY the estimator-agnostic
+structural pieces onto the production tracker, leaving the tuned estimator and
+every gate untouched. Same harness, same metrics, strict improvement:
+
+    phantom events:      4 -> 1     (Hungarian kills the association-churn class)
+    0.25 m/s retention:  79% -> 83%    acquisition unchanged (4/6 @ 2.0 s)
+    0.35 m/s retention:  48% -> 57%    acquisition unchanged (4/6 @ 2.3 s)
+    occlusion > mem_time_s: track resurrects with full history, gated velocity
+    back in 0 ticks on reappearance (was a >=5-sighting cold restart) -- the
+    direct answer to the user's live "loses the circle" report.
+
+Mechanics: per-frame one-shot linear_sum_assignment within the same per-track
+limits (merge_dist + young boost) replaces greedy nearest-neighbour; pruned
+tracks linger in a graveyard for reid_time_s=1.0 and an unmatched detection
+within reid_dist=0.4 of a dead track's coasted position resurrects the row
+(velocity, sightings, coherence sums, anchors -- everything). scipy is now a
+dependency of the tracking path. 41 tests.
+
 ## 0.9.24 - 2026-08-06 - SORT/KF tracker: built, measured, honestly parked
 
 The planned "principled upgrade" of the obstacle tracker (per-track

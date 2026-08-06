@@ -28,6 +28,7 @@ per-point clearance or collision flags against every remembered circle.
 """
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from .kinematics import base_to_odom
 
@@ -58,6 +59,7 @@ class ObstacleField(object):
         self.cfg = cfg
         self._clock = wall_clock
         self._mem = np.zeros((0, NCOLS), dtype=float)
+        self._grave = []              # (dead 18-col row, death time) for re-ID
         self._car_xy = None               # last update() pose, for the trust-range gate
 
     @staticmethod
@@ -167,7 +169,18 @@ class ObstacleField(object):
             age_ok = (now - self._mem[:, T]) <= self.cfg.mem_time_s
             d = np.hypot(self._mem[:, X] - pose[0], self._mem[:, Y] - pose[1])
             near_ok = d <= self.cfg.mem_radius
-            self._mem = self._mem[age_ok & near_ok]
+            keep = age_ok & near_ok
+            # freshly dead tracks linger in a graveyard for re-identification:
+            # an occlusion longer than mem_time_s used to KILL a mature track,
+            # and the reappearing obstacle started over as a stranger (sighting
+            # count, velocity, gates -- all from zero: the user-visible "loses
+            # the circle"). A new detection near a dead track's coasted
+            # position resurrects it with its full history instead.
+            for row in self._mem[~keep]:
+                self._grave.append((row.copy(), now))
+            self._mem = self._mem[keep]
+        self._grave = [(r, td) for (r, td) in self._grave
+                       if now - td <= self.cfg.reid_time_s]
 
         # Merge each fresh circle into at most one track, and each track absorbs
         # at most ONE circle per frame (see module docstring for why that
@@ -179,30 +192,48 @@ class ObstacleField(object):
         # only biases ASSOCIATION; planning still sees the gated value. YOUNG
         # tracks additionally get a wider match radius (assoc_young_boost): a
         # fast mover's first re-sighting lands merge_dist + v*tick away.
-        claimed = set()
-        for row in fresh:
-            if len(self._mem):
-                gap = now - self._mem[:, T]
-                px = self._mem[:, OX] + self._mem[:, VX] * gap
-                py = self._mem[:, OY] + self._mem[:, VY] * gap
-                d = np.hypot(px - row[0], py - row[1])
-                lim = np.where(self._mem[:, N] < 3,
-                               self.cfg.merge_dist + self.cfg.assoc_young_boost,
-                               self.cfg.merge_dist)
-                # eligible = within its OWN limit and not already fed this
-                # frame; pick the nearest eligible (argmin over all tracks used
-                # to shadow a young track whose boosted radius covered the
-                # observation whenever a mature track was marginally nearer)
-                elig = d <= lim
-                if claimed:
-                    elig[list(claimed)] = False
-                if elig.any():
-                    j = int(np.argmin(np.where(elig, d, np.inf)))
-                    claimed.add(j)
-                    self._merge(j, row, now)
-                    continue
-            self._mem = np.vstack([self._mem, self._rows(row[None, :], now)])
-            claimed.add(len(self._mem) - 1)   # a track born this frame is fed
+        # HUNGARIAN one-shot assignment (0.9.25) instead of per-circle greedy
+        # nearest: globally optimal matching within the same per-track limits
+        # (merge_dist, + assoc_young_boost for young tracks), so a detection
+        # can no longer hijack a marginally-nearer neighbouring track. The
+        # one-observation-per-track-per-frame invariant now holds by
+        # construction. Everything downstream of a match -- velocity sample,
+        # EMA updates, anchors, every gate -- is UNCHANGED.
+        D = len(fresh)
+        unmatched = list(range(D))
+        if len(self._mem) and D:
+            gap = now - self._mem[:, T]
+            px = self._mem[:, OX] + self._mem[:, VX] * gap
+            py = self._mem[:, OY] + self._mem[:, VY] * gap
+            lim = np.where(self._mem[:, N] < 3,
+                           self.cfg.merge_dist + self.cfg.assoc_young_boost,
+                           self.cfg.merge_dist)
+            d = np.hypot(px[:, None] - fresh[None, :, 0],
+                         py[:, None] - fresh[None, :, 1])   # (tracks, dets)
+            cost = np.where(d <= lim[:, None], d, 1e6)
+            ri, ci = linear_sum_assignment(cost)
+            for i, j in zip(ri, ci):
+                if cost[i, j] < 1e6:
+                    self._merge(i, fresh[j], now)
+                    unmatched.remove(j)
+        # unmatched detections: resurrect a dead track if one coasts nearby,
+        # else a brand-new track
+        for j in unmatched:
+            row = fresh[j]
+            best, bd = None, self.cfg.reid_dist
+            for k, (dead, td) in enumerate(self._grave):
+                gap = now - dead[T]
+                dx = dead[OX] + dead[VX] * gap - row[0]
+                dy = dead[OY] + dead[VY] * gap - row[1]
+                dd = float(np.hypot(dx, dy))
+                if dd < bd:
+                    best, bd = k, dd
+            if best is not None:
+                dead, _ = self._grave.pop(best)
+                self._mem = np.vstack([self._mem, dead[None, :]])
+                self._merge(len(self._mem) - 1, row, now)
+            else:
+                self._mem = np.vstack([self._mem, self._rows(row[None, :], now)])
         return self.circles()
 
     def _merge(self, j, row, now):

@@ -176,3 +176,24 @@ def test_observation_jump_closes_the_gate_instead_of_lying():
             reopened = k
             break
     assert reopened is not None and reopened <= 5
+
+
+def test_reid_resurrects_a_track_after_long_occlusion():
+    # occlusion longer than mem_time_s used to KILL a mature track; the
+    # reappearing mover restarted as a stranger (>=5 sightings of silence).
+    # The graveyard re-ID resurrects it with its history: gated velocity is
+    # back IMMEDIATELY on reappearance.
+    clk = {"t": 0.0}
+    field = ObstacleField(C.ObstacleConfig(), lambda: clk["t"])
+    y = -1.0
+    for k in range(8):                       # acquire
+        field.update([(2.0, y, 0.12)], (0, 0, 0))
+        clk["t"] += TICK
+        y += 0.3 * TICK
+    for k in range(5):                       # 1.67 s occluded (> mem 1.5 s)
+        field.update([], (0, 0, 0))
+        clk["t"] += TICK
+        y += 0.3 * TICK
+    field.update([(2.0, y, 0.12)], (0, 0, 0))
+    v = field.velocities()
+    assert len(v) and np.hypot(v[0, 0], v[0, 1]) == pytest.approx(0.3, abs=0.09)
