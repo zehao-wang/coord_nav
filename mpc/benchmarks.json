@@ -193,44 +193,44 @@
     "L1_static_open": {
      "collision": 0.0,
      "episodes": 80,
-     "mean_min_clearance": 0.433,
-     "mean_time_s": 8.94,
-     "success": 0.4625
+     "mean_min_clearance": 0.459,
+     "mean_time_s": 14.61,
+     "success": 0.4875
     },
     "L2_static_tight": {
      "collision": 0.0,
      "episodes": 120,
      "mean_min_clearance": 0.344,
-     "mean_time_s": 4.08,
+     "mean_time_s": 4.81,
      "success": 0.3333
     },
     "L3_dyn_single": {
      "collision": 0.0,
      "episodes": 200,
-     "mean_min_clearance": 0.646,
-     "mean_time_s": 8.74,
-     "mean_turn_deg": 11.6,
+     "mean_min_clearance": 0.641,
+     "mean_time_s": 10.15,
+     "mean_turn_deg": 11.2,
      "success": 1.0,
-     "tail_wander_m": 0.133
+     "tail_wander_m": 0.099
     },
     "L4_dyn_complex": {
-     "collision": 0.05,
+     "collision": 0.045,
      "episodes": 200,
-     "mean_min_clearance": 0.341,
-     "mean_time_s": 10.19,
-     "mean_turn_deg": 21.9,
-     "success": 0.915,
-     "tail_wander_m": 0.202
+     "mean_min_clearance": 0.387,
+     "mean_time_s": 15.72,
+     "mean_turn_deg": 11.3,
+     "success": 0.89,
+     "tail_wander_m": 0.283
     },
     "overall": {
-     "collision": 0.0167,
+     "collision": 0.015,
      "episodes": 600,
-     "mean_min_clearance": 0.459,
-     "mean_time_s": 8.93,
-     "success": 0.7667
+     "mean_min_clearance": 0.477,
+     "mean_time_s": 12.23,
+     "success": 0.7617
     }
    },
-   "commit": "baaae76",
+   "commit": "c02e8df",
    "date": "2026-08-06",
    "protocol": 2,
    "seeds": 20

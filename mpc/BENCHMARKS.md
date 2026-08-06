@@ -21,6 +21,6 @@ Difficulty tiers (graded by construction, fixed generator seeds):
 | `mpc_grid_t` | 1.000 / 0.000 | 1.000 / 0.000 | 1.000 / 0.000 | 0.965 / 0.035 | 0.988 / 0.012 | 22.1 | 0.159 | baaae76 | 2026-08-06 |
 | `mpc_vw` | 0.850 / 0.113 | 0.350 / 0.600 | 0.725 / 0.270 | 0.485 / 0.450 | 0.587 / 0.375 | 6.3 | 0.157 | cd7942a | 2026-08-05 |
 | `mpc_vw_t` | 0.850 / 0.113 | 0.350 / 0.600 | 0.890 / 0.060 | 0.835 / 0.130 | 0.758 / 0.198 | 6.5 | 0.118 | baaae76 | 2026-08-06 |
-| `orca` | 0.463 / 0.000 | 0.333 / 0.000 | 1.000 / 0.000 | 0.915 / 0.050 | 0.767 / 0.017 | 16.8 | 0.168 | baaae76 | 2026-08-06 |
+| `orca` | 0.487 / 0.000 | 0.333 / 0.000 | 1.000 / 0.000 | 0.890 / 0.045 | 0.762 / 0.015 | 11.2 | 0.191 | c02e8df | 2026-08-06 |
 
 `turn` = mean direction change between trajectory steps (smoothness, dynamic tiers); `tail` = mean |cross-track| over each episode's last third (return-to-line, dynamic tiers).
