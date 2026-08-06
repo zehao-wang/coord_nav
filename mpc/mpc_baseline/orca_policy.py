@@ -12,7 +12,8 @@ Environment modelling -- the two RVO2 channels, used for what they are for:
     half-plane machinery, current velocity AND preferred velocity set to the
     tracker's estimate.
   * STATIC obstacles (gated velocity == 0) go through RVO2's native
-    line-obstacle channel as CCW octagons circumscribing the circle. That
+    line-obstacle channel as CCW circumscribed 24-gons -- tight enough
+    (0.9% radial oversize) that the polygon IS the circle region. That
     channel is the right physics for things that never yield: responsibility
     1.0 (no reciprocal halving), constraints that keep wall-parallel
     velocities feasible (head-on approach resolves to sliding along, not
@@ -69,11 +70,16 @@ import rvo2
 from carpolicy import Policy, Action
 from .kinematics import build_action_table
 
-# unit CCW octagon (RVO2 obstacle polygons: CCW = solid, verified empirically);
-# scaled by 1/cos(pi/8) the polygon CIRCUMSCRIBES the circle it stands in for.
-_OCT = np.array([[np.cos(a), np.sin(a)]
-                 for a in (np.arange(8) + 0.5) * (np.pi / 4.0)])
-_OCT_SCALE = 1.0 / np.cos(np.pi / 8.0)
+def _circle_polygon(n):
+    """Unit CCW n-gon that CIRCUMSCRIBES the unit circle (RVO2 obstacle
+    polygons: CCW = solid, verified empirically). Circumscribed -- never
+    inscribed or equal-area -- because containment is the safety property:
+    the collision metric is edge contact with the CIRCLE, so the polygon
+    standing in for it must cover it fully. Radial oversize at the vertices
+    is 1/cos(pi/n) - 1: 8.2% for the old octagon (2.5 cm on a 0.3 m circle,
+    eating real channel width on the tight static tier), 0.9% at n=24."""
+    ang = (np.arange(n) + 0.5) * (2.0 * np.pi / n)
+    return np.column_stack([np.cos(ang), np.sin(ang)]) / np.cos(np.pi / n)
 
 
 class _ORCABase(Policy):
@@ -87,6 +93,7 @@ class _ORCABase(Policy):
     TIME_HORIZON = 2.5          # s, agent-agent avoidance lookahead
     TIME_HORIZON_OBST = 2.5     # s, agent-obstacle lookahead
     STOP_SPEED = 0.02           # below this ORCA is yielding: emit STOP
+    OBST_VERTICES = 24          # static-circle polygon fidelity (see _circle_polygon)
     PERTURB_ANGLE = 0.12        # rad; Blocks.cpp-style deadlock breaking
     PERTURB_MIN_FRAC = 0.75     # |angle| >= this fraction of PERTURB_ANGLE: the
                                 # tangential slide it seeds (speed x sin) must
@@ -102,6 +109,7 @@ class _ORCABase(Policy):
         self._margin = cfg.cost.extra_margin
         self.rng = np.random.default_rng(0)          # reseeded by eval._seed_policy
         self._pang = None                            # sticky per-episode perturbation
+        self._poly = _circle_polygon(self.OBST_VERTICES)
 
     def _tick(self):
         """The executed control period: resolve_policy/runner write it into
@@ -149,7 +157,7 @@ class _ORCABase(Policy):
             x, y, r = circles[i]
             vx, vy = (vels[i] if len(vels) else (0.0, 0.0))
             if vx == 0.0 and vy == 0.0:
-                pts = np.array([x, y]) + _OCT * (float(r) * _OCT_SCALE)
+                pts = np.array([x, y]) + self._poly * float(r)
                 sim.addObstacle([(float(px), float(py)) for px, py in pts])
                 statics = True
             else:

@@ -50,6 +50,16 @@ time-aware MPC row is the one that solves it, by design).
 44 tests (3 new pins: obstacle-channel slide + registry contract, vw open
 course, seed determinism).
 
+Polygon fidelity follow-up (user: the polygon should match the circle
+region): octagon -> circumscribed 24-gon, radial oversize 8.2% -> 0.9%
+(2.5 cm -> 3 mm on a 0.3 m circle). Circumscribed stays non-negotiable --
+the collision metric is edge contact with the CIRCLE, an inscribed or
+equal-area polygon would let the robot cut a corner into it. The reclaimed
+channel width is worth real success rate: static suite 21 -> 25/30 at zero
+collisions (dead_ahead, wall_inline, slightly_offset all 5/5; only slalom
+-- the chained-go-around identity gap -- remains). 11.8 ms/tick at 12
+statics (288 segments), far under the 333 ms budget.
+
 The follow-through on 0.9.24's parked KF: graft ONLY the estimator-agnostic
 structural pieces onto the production tracker, leaving the tuned estimator and
 every gate untouched. Same harness, same metrics, strict improvement:
