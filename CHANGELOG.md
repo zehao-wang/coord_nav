@@ -3,6 +3,33 @@
 Findings and notable changes. README is for day-to-day usage; this file records
 *why* things are the way they are (hard-won during bring-up).
 
+## 0.9.24 - 2026-08-06 - SORT/KF tracker: built, measured, honestly parked
+
+The planned "principled upgrade" of the obstacle tracker (per-track
+constant-velocity Kalman + Mahalanobis-gated Hungarian assignment + graveyard
+re-identification + significance hysteresis) was implemented and tuned on the
+established harness (three real captures as labeled negatives, noise-matched
+injected movers as positives). Verdict on identical metrics, best KF tuning
+(accel_std 0.2, sig entry/exit 12/4.6, 6-tick streak cap) vs the production
+EMA + tiered-gate tracker:
+
+    phantom events:      12  vs  4      (worse, 3x)
+    0.25 m/s retention:  64% vs 79%    (worse)   acq 3/6@2.3s vs 4/6@2.0s
+    0.35 m/s retention:  71% vs 48%    (better)  acq 4/6@2.0s vs 4/6@2.3s
+
+Mixed at best, so it does NOT ship -- the project rule is that upgrades must
+beat the harness, not the whiteboard. Root insight: the KF's chi-square
+velocity significance cannot express what the tuned heuristic gates encode
+(the process-noise floor keeps sigma_v ~0.09-0.15 m/s, so pedestrian-speed
+significance saturates near the threshold and dropout-induced covariance
+inflation makes any single threshold flap; hysteresis trades that against
+phantom lingering). The STRUCTURAL pieces are still right: Hungarian
+one-to-one association (kills hijack/double-merge classes) and graveyard
+re-ID (the user's "loses the circle") are estimator-agnostic. NEXT STEP
+RECORDED: graft exactly those two onto the production estimator, leave the
+tuned gates untouched. Full KF implementation preserved on branch
+`kf-tracker`; scipy added to the env for when that graft lands.
+
 ## 0.9.23 - 2026-08-06 - ORCA/RVO2 joins the board (the literature's reactive crowd baseline)
 
 Context: the user asked about Human2Nav (ICRA 2026, crowd navigation from
